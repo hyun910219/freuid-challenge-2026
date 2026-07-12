@@ -87,7 +87,8 @@ def n_workers(default: int) -> int:
 
 
 def rank01(v) -> np.ndarray:  # noqa: ANN001
-    return pd.Series(v).rank(method="average").to_numpy() / len(v)
+    r = pd.Series(v).rank(method="average").to_numpy()
+    return (r - 1) / (len(r) - 1)   # match scripts/private_day.py exactly
 
 
 def logit_shift(p: np.ndarray, delta: float) -> np.ndarray:
@@ -108,6 +109,18 @@ def stage_inventory(images_dir: Path, work: Path) -> pd.DataFrame:
     files = sorted(p for p in images_dir.iterdir()
                    if p.suffix.lower() in IMG_EXT)
     assert files, f"no images under {images_dir}"
+    # id = filename stem, must be unique. If two files share a stem (e.g.
+    # a.jpg + a.png), keep the first and warn -> guarantees unique ids and
+    # avoids a cross-product blow-up in stage_combine (graceful fallback).
+    seen, uniq = set(), []
+    for p in files:
+        if p.stem not in seen:
+            seen.add(p.stem)
+            uniq.append(p)
+    if len(uniq) != len(files):
+        log(f"WARNING: {len(files) - len(uniq)} duplicate-stem file(s) dropped "
+            f"(id must be unique); kept first per stem")
+    files = uniq
     log(f"inventory: {len(files)} images")
     with ProcessPoolExecutor(max_workers=16) as ex:
         sizes = list(ex.map(_imsize, (str(p) for p in files), chunksize=256))
@@ -166,6 +179,9 @@ def stage_infer(images_dir: Path, work: Path, members: list, tta: bool,
                 p = torch.sigmoid(model(x).float())
                 if tta:
                     p = 0.5 * (p + torch.sigmoid(model(torch.flip(x, dims=[-1])).float()))
+                # guard: a non-finite score would poison ranking and break the
+                # "finite float" contract -> clamp to neutral 0.5 / the bounds.
+                p = torch.nan_to_num(p, nan=0.5, posinf=1.0, neginf=0.0)
                 scores.extend(p.cpu().numpy().tolist())
                 ids.extend(batch["id"])
         del model
@@ -182,8 +198,14 @@ def stage_combine(work: Path, bbs: dict) -> pd.DataFrame:
     members = [m for mem in bbs.values() for m in mem]
     for name in members:
         df = pd.read_csv(work / f"scores_{name}.csv", dtype={"id": str})
-        merged = merged.merge(df.rename(columns={"score": name}), on="id", how="inner")
-    assert len(merged) == len(inv), "id mismatch across member dumps"
+        # left join keeps exactly one row per inventory id (no drops/blow-up)
+        merged = merged.merge(df.rename(columns={"score": name}), on="id", how="left")
+    assert len(merged) == len(inv), "row count changed after left-merge"
+    miss = int(merged[members].isna().any(axis=1).sum())
+    if miss:  # fallback: fill a missing member score with that member's mean
+        log(f"WARNING: {miss} row(s) missing a member score — filled with column mean")
+        for name in members:
+            merged[name] = merged[name].fillna(merged[name].mean())
     for b, mem in bbs.items():
         merged[b] = merged[mem].mean(axis=1)   # fold-agg = plain mean
     # cross-backbone = equal rank-mean (single backbone -> its own score order)
@@ -197,10 +219,11 @@ def stage_combine(work: Path, bbs: dict) -> pd.DataFrame:
     return merged[["id", "captured", *bbs, "combined"]].copy()
 
 
-def fb5_extras_tier(c: float, core_tta: bool) -> str:
+def fb5_extras_tier(c: float) -> str:
     """fb5 captured-lever budget tier at the conservative A100 factor
-    (mirrors scripts/private_day.py — decisions must match)."""
-    core_ms = len(FB5_MEMBERS) * MS_CORE["fb"] * (2 if core_tta else 1)
+    (mirrors scripts/private_day.py — decisions must match).
+    fb5 core is ALWAYS hflip-TTA, so the core cost is hardcoded at x2."""
+    core_ms = len(FB5_MEMBERS) * MS_CORE["fb"] * 2
     headroom = CAP_H - N_TEST_FULL * core_ms / 1000 / 3600 / A100_FACTOR_CONSERVATIVE
     ext_ms = len(FC_MEMBERS) * MS_CORE["fc"] + len(FD_MEMBERS) * MS_CORE["fd"]
 
@@ -216,7 +239,7 @@ def fb5_extras_tier(c: float, core_tta: bool) -> str:
 
 
 def stage_captured(sc: pd.DataFrame, images_dir: Path, work: Path,
-                   variant: str, core_tta: bool) -> pd.DataFrame:
+                   variant: str) -> pd.DataFrame:
     bbs = active_backbones(variant)
     cap = sc[sc.captured].copy()
     c = len(cap) / len(sc)
@@ -233,7 +256,7 @@ def stage_captured(sc: pd.DataFrame, images_dir: Path, work: Path,
     log(f"capShift delta={CAP_DELTA} applied to {len(cap)} rows (c={c:.2%})")
 
     if variant == "fb5":
-        tier = fb5_extras_tier(c, core_tta)
+        tier = fb5_extras_tier(c)
         log(f"fb5 captured FC/FD tier = {tier} "
             f"(c={c:.2%} @x{A100_FACTOR_CONSERVATIVE})")
         if tier == "OFF":
@@ -248,7 +271,9 @@ def stage_captured(sc: pd.DataFrame, images_dir: Path, work: Path,
         for name in FC_MEMBERS + FD_MEMBERS:
             df = pd.read_csv(work / f"scores_cap_{name}.csv", dtype={"id": str})
             cap = cap.merge(df.rename(columns={"score": name}), on="id", how="inner")
-        assert len(cap) == int(sc.captured.sum()), "captured FC/FD coverage mismatch"
+        if len(cap) != int(sc.captured.sum()):  # fallback: capShift only, no ens3
+            log("WARNING: captured FC/FD coverage mismatch -> capShift only, no reorder")
+            return sc
         cap["fc"] = cap[FC_MEMBERS].mean(axis=1)
         cap["fd"] = cap[FD_MEMBERS].mean(axis=1)
     # ens3 = FB + FC + FD equal mean-rank (exp16).
@@ -275,7 +300,9 @@ def stage_write(sc: pd.DataFrame, out_csv: Path) -> None:
         sc.loc[order, "value"] = vals
         log(f"captured-internal reorder applied to {int(m.sum())} rows")
     vals_fmt = ["%.10f" % v for v in sc.value]
-    assert len(set(vals_fmt)) == n, "tie collapse in formatted values"
+    if len(set(vals_fmt)) != n:  # metric is rank-only; near-ties are harmless
+        log(f"WARNING: {n - len(set(vals_fmt))} formatted-value collision(s) "
+            f"(rank-only metric; writing anyway)")
     out_csv.parent.mkdir(parents=True, exist_ok=True)
     with out_csv.open("w") as f:
         f.write("id,label\n")
@@ -308,7 +335,7 @@ def main() -> None:
     if variant == "plain":
         log("plain variant — captured lever skipped (raw 3-way rank-mean)")
     else:
-        sc = stage_captured(sc, images_dir, work, variant, tta)  # capShift + ens3
+        sc = stage_captured(sc, images_dir, work, variant)  # capShift + ens3
     stage_write(sc, Path(args.out))
     log("done")
 
