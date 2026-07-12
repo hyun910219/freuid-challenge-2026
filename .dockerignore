@@ -1,0 +1,34 @@
+# Keep the build context small and reproducible.
+# IMPORTANT: never ignore weights/ or model checkpoints — they must be COPY'd in.
+
+# VCS / caches
+.git/
+.gitignore
+**/__pycache__/
+*.pyc
+*.pyo
+*.txgate_bak
+.pytest_cache/
+.mypy_cache/
+
+# Local run outputs
+out/
+submissions/
+
+# Not needed inside the inference image
+report/
+tests/sample_data/
+# dev/as-run scripts (container uses only prepare_submission.py + src/ + configs/)
+scripts/
+
+# LaTeX / PDF build artifacts
+*.aux
+*.log
+*.pdf
+
+# --- Never ignore weights (belt-and-suspenders re-includes) ---
+!weights/
+!weights/**
+!*.ckpt
+!*.pth
+!*.onnx

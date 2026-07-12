@@ -1,0 +1,143 @@
+# FREUID Challenge 2026 — Reproducible Solution
+
+Document fraud detection (Microblink / IJCAI-ECAI). Verified by organizers via
+**`git clone` → `docker build` → `docker run --network none`**: runs offline with all
+model weights baked into the image, reads a flat directory of test images, and writes a
+single `submission.csv`.
+
+## Method (summary)
+
+Three frozen-backbone LoRA classifiers, ensembled by rank, with an inference-side lever
+for recaptured (screen/print-recapture) images:
+
+| Component | Detail |
+|---|---|
+| **FB** | frozen DINOv2-L (`vit_large_patch14_dinov2.lvd142m`) + merged LoRA (q/k/v last-8, r16), 5 folds @448×714 (main pick: 4-fold budget trim) |
+| **FC** | frozen OpenCLIP ViT-L/336 (`vit_large_patch14_clip_336.openai_ft_in12k_in1k`) + merged LoRA, 3 folds, CLIP norm |
+| **FD** | frozen SigLIP2-L (`vit_large_patch16_siglip_384.v2_webli`) + merged LoRA, 3 folds @448×720, 0.5/0.5 norm |
+| Fold aggregation | plain mean of fold scores (per backbone) |
+| Backbone combine | equal rank-mean of the 3 backbones (cross-domain rule) |
+| Captured detection | resolution-frequency: clusters < 0.5% of rows = captured |
+| capShift | score shift δ=0.75 in logit space, per backbone, captured rows only |
+| Captured reorder | within-captured equal mean-rank of the 3 backbones (**ens3** = FB + FC + FD) |
+| Output | strict total order → `(pos+0.5)/n` rank values |
+
+Frozen backbones preserve the pretraining generalization prior; fine-tuned variants
+collapsed on blind held-out countries (leave-type-out screening). The main pick's fold
+counts (4/3/3) are a budget trim so the 3-backbone core fits the 6h/A100 cap; the fb5
+pick runs all 5 FB folds with hflip-TTA and scores FC/FD on the captured subset only.
+Details in `report/report.md`.
+
+## Contract (must always hold)
+
+| Aspect | Guarantee |
+|---|---|
+| Network | Inference runs with `--network none`. No runtime downloads. |
+| Weights | 11 checkpoints COPY'd into the image at build time. |
+| Runtime | Fits **< 6 h on a single A100** for both picks: main = FB4+FC3+FD3 bf16 noTTA (~4.9h @ A10G/2.2, ~5.4h @ conservative A10G/2.0); fb5 = FB5 bf16 hflip-TTA (~5.4h @ /2.0) + FC3/FD3 on captured rows only, budget-tiered (TTA / noTTA / off). |
+| Input | Flat, read-only dir at `/data`. `id` = filename **without** extension. |
+| Extensions | `.jpeg .jpg .png .webp .bmp .tif .tiff`. No CSV/manifest/subfolders assumed. |
+| Output | Exactly `/submissions/submission.csv`, header `id,label`. One row per image; no missing/extra/duplicate ids. Nothing written outside `/submissions/`. |
+| Label | Finite float fraud score, **higher = more fraudulent**. |
+| License | Apache-2.0 (`LICENSE`). |
+
+## Prerequisites — weights
+
+The 11 checkpoints (~13 GB) are baked into the image. Populate `weights/` before building:
+
+```bash
+git clone https://github.com/hyun910219/freuid-challenge-2026 && cd freuid-challenge-2026
+bash scripts/download_weights.sh      # fetches the 11 ckpts from the GitHub Release
+                                      # (weights-v1) and verifies weights_sha256.txt
+```
+
+Expected layout (checked against `weights_sha256.txt`):
+`weights/final/<member>/best.ckpt` — ff_b_fold{0,1,2,3_v2,4}, ff_c_fold{0,1,2}, ff_d_fold{1,2,3}.
+
+## Build
+
+```bash
+scripts/build.sh          # verifies weights_sha256.txt, then: docker build -t freuid-repro:local .
+```
+
+## Run (offline, exactly as evaluated)
+
+```bash
+scripts/run_local.sh /absolute/path/to/flat/test/images
+
+# equivalently:
+docker run --rm --network none --gpus all --shm-size=8g \
+  -v /absolute/path/to/flat/test/images:/data:ro \
+  -v "$(pwd)/out:/submissions" \
+  freuid-repro:local
+```
+
+Output → `out/submission.csv`. `--shm-size=8g` lets DataLoader workers use shared memory;
+without it the entrypoint auto-degrades to `num_workers=0` (correct, slower).
+
+### Two selected final picks (same image, same weights)
+
+Both Kaggle final picks come from this one image and the same frozen weights; they differ
+only by an inference-time flag (inference orchestration, allowed under the code freeze):
+
+| Pick | Command (append to `docker run`) | Method difference |
+|---|---|---|
+| **main** (default) | *(no extra flag)* | 3-way core (FB4+FC3+FD3, noTTA); captured lever = capShift(δ=0.75) + ens3 within-captured mean-rank reorder (FC/FD ranks reuse the core scores — zero extra GPU) |
+| **fb5** | `-e VARIANT=fb5` | FB5 core (all 5 FB folds, hflip-TTA); captured lever = capShift(FB) + ens3 reorder with FC3/FD3 scored on the captured rows only (budget-tiered) |
+
+```bash
+docker run ... freuid-repro:local                && sha256sum out/submission.csv  # Pick 1 (main)
+docker run ... -e VARIANT=fb5 freuid-repro:local && sha256sum out/submission.csv  # Pick 2 (fb5)
+```
+
+(`VARIANT=plain` is also available — 3-way core with the captured lever off, diagnostic.)
+
+## Validate
+
+```bash
+python3 scripts/validate_submission.py \
+  --submission out/submission.csv --data /absolute/path/to/flat/test/images
+```
+
+Checks: header `id,label`, all labels finite, no duplicate ids, ids exactly match `/data`.
+
+## Layout
+
+```
+freuid-solution/
+├── Dockerfile              # pytorch 2.12 / cuda12.6 base; COPY deps -> code -> weights
+├── prepare_submission.py   # entrypoint: inventory -> infer -> combine -> captured -> write
+├── src/                    # FB/FC/FD codebase (models/, data/, infer.py, train.py, utils/)
+├── configs/                # member configs: ff_b_fold*, ff_c_fold*, ff_d_fold*
+├── weights/                # 11 ckpts (download_weights.sh) -> COPY'd into image
+├── weights_sha256.txt      # integrity manifest
+├── scripts/                # build.sh, run_local.sh, validate_submission.py, download_weights.sh, private_day.py
+├── report/                 # technical report (report.md + make_pdf.py)
+└── tests/sample_data/      # tiny local smoke-test images (not in image)
+```
+
+## Training
+
+Each member = one config; LoRA is merged into a plain checkpoint on save.
+
+```bash
+PYTHONPATH=. python src/train.py --config configs/ff_b_fold0.yaml   # etc.
+```
+
+Training data = the official FREUID competition dataset only (no external data used for any
+submitted weight).
+
+## External data / pretrained backbones
+
+- **No external datasets** used for any submitted weight (competition dataset only).
+- Pretrained backbones (all license-compatible): DINOv2 (Apache-2.0), timm OpenCLIP ViT-L
+  (OpenAI CLIP weights via timm, MIT), SigLIP2 `v2_webli` (via timm, Apache-2.0). Cited in
+  the technical report (`report/report.md`, §External Resources).
+
+## Reference hardware & runtime
+
+- **Hardware:** 1× NVIDIA A100 (evaluator). **Budget:** < 6 h inference on that single A100.
+- **Base image:** `pytorch/pytorch:2.12.0-cuda12.6-cudnn9-runtime`.
+- GPU nondeterminism may perturb raw scores at ~1e-4; the pipeline is rank-based end-to-end.
+
+See [`SUBMISSION_CHECKLIST.md`](SUBMISSION_CHECKLIST.md) before submitting.

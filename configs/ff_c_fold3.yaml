@@ -1,0 +1,41 @@
+# ff_c_fold3 — FC frozen OpenCLIP ViT-L/336 + LoRA(q/k/v last-8) @448, g1 on. GENERATED (FB recipe, backbone+norm만 변경).
+run_name: ff_c_fold3
+
+data:
+  csv_path: /home/ec2-user/data/freuid/train_labels.csv
+  image_root: /home/ec2-user/data/freuid
+  fold_csv: /home/ec2-user/data/freuid/folds_random.csv
+  fold: 3
+  image_size: [448, 714]
+  norm_mean: [0.48145466, 0.4578275, 0.40821073]   # OpenAI CLIP norm (backbone-correct)
+  norm_std: [0.26862954, 0.26130258, 0.27577711]
+
+model:
+  backbone: vit_large_patch14_clip_336.openai_ft_in12k_in1k
+  pretrained: true
+  drop_rate: 0.0
+  drop_path_rate: 0.1
+  freeze_backbone: true
+  unfreeze_last_blocks: 0
+  head_hidden_dim: 256
+  lora:
+    r: 16
+    alpha: 32
+    targets: [qkv]
+    last_n: 8
+
+train:
+  epochs: 4
+  stop_after_epochs: 2
+  batch_size: 12
+  num_workers: 8
+  lr: 3.0e-4
+  weight_decay: 5.0e-2
+  amp: true
+  resize_strategy: aspect_resize
+  domain_aug: true
+  tamper_synth_p: 0.30
+  g1: true
+
+output_dir: /home/ec2-user/workspace/efs/ml_workspace/kaggle/outputs/ff_c_fold3
+seed: 42

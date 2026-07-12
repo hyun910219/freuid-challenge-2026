@@ -1,0 +1,8 @@
+# Model checkpoints are large binaries — track via Git LFS so they clone into the
+# image build. (Alternative: keep weights/ out of git and fetch at build time with
+# scripts/download_weights.sh — see README. The Dockerfile COPYs weights/ either way.)
+weights/**/*.ckpt filter=lfs diff=lfs merge=lfs -text
+*.ckpt         filter=lfs diff=lfs merge=lfs -text
+*.pth          filter=lfs diff=lfs merge=lfs -text
+*.onnx         filter=lfs diff=lfs merge=lfs -text
+*.safetensors  filter=lfs diff=lfs merge=lfs -text

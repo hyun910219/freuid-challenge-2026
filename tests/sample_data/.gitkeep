@@ -1,0 +1,2 @@
+# Placeholder so tests/sample_data/ is tracked.
+# Drop a few tiny images here for local smoke tests (excluded from the Docker image).

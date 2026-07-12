@@ -1,0 +1,7 @@
+# Weights are distributed via GitHub Release (see scripts/download_weights.sh),
+# never committed to git. dist/ holds local release-asset staging (symlinks).
+weights/*
+!weights/.gitkeep
+dist/
+__pycache__/
+*.pyc

@@ -1,0 +1,46 @@
+# FD in-domain 5fold — frozen SigLIP2 ViT-L/16 + LoRA(qkv last-8) @448x720.
+# LTO gate passed on both blind countries (2026-07-10):
+#   GUINEA ens3 rank-mean 0.0185 vs ens2 0.0194 (-4.6%)
+#   EGYPT  ens3 rank-mean 0.0218 vs ens2 0.0474 (-54%; FD solo 0.0143 best single)
+# Weight probe: no weighting beats equal on both -> equal 3-way rank-mean.
+# Same FB/FC recipe; only backbone (+0.5/0.5 norm, patch16 image size) differs.
+run_name: ff_d_fold1
+
+data:
+  csv_path: /home/ec2-user/data/freuid/train_labels.csv
+  image_root: /home/ec2-user/data/freuid
+  fold_csv: /home/ec2-user/data/freuid/folds_random.csv
+  fold: 1
+  image_size: [448, 720]      # patch16: 720 = 45 patches wide (714 not /16)
+  norm_mean: [0.5, 0.5, 0.5]  # SigLIP norm (backbone-correct, from pretrained_cfg)
+  norm_std: [0.5, 0.5, 0.5]
+
+model:
+  backbone: vit_large_patch16_siglip_384.v2_webli
+  pretrained: true
+  drop_rate: 0.0
+  drop_path_rate: 0.1
+  freeze_backbone: true
+  unfreeze_last_blocks: 0
+  head_hidden_dim: 256
+  lora:
+    r: 16
+    alpha: 32
+    targets: [qkv]
+    last_n: 8
+
+train:
+  epochs: 4
+  stop_after_epochs: 2
+  batch_size: 12
+  num_workers: 8
+  lr: 3.0e-4
+  weight_decay: 5.0e-2
+  amp: true
+  resize_strategy: aspect_resize
+  domain_aug: true
+  tamper_synth_p: 0.30
+  g1: true
+
+output_dir: /home/ec2-user/workspace/efs/ml_workspace/kaggle/outputs/ff_d_fold1
+seed: 42
