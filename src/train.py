@@ -82,7 +82,7 @@ def _fact_mix(images: torch.Tensor, p: float, alpha_max: float) -> torch.Tensor:
 
 
 def _load_init_ckpt(model: BinaryClassifier, ckpt_path: str) -> None:
-    """저해상도 ckpt -> 고해상도 fine-tune 초기화 (pos_embed 보간)."""
+    """Initialize high-res fine-tune from low-res ckpt (pos_embed interpolation)."""
     from timm.layers import resample_abs_pos_embed
 
     ck = torch.load(ckpt_path, map_location="cpu", weights_only=False)

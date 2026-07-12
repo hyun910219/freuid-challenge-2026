@@ -19,8 +19,9 @@ Uniform end-to-end pipeline (the method behind the two final picks):
 Note: the submitted files' public-block rows were frozen mid-competition
 (whole-file public metric); this container reproduces the ranking pipeline
 that produced them and the private-block ranking that decides the final score.
-The captured reorder is ens3 everywhere: the earlier legacy extra families
-were dropped 2026-07-12 (62-64% of the lever GPU cost, runtime decision).
+The captured reorder is ens3 = FB + FC + FD everywhere; earlier ensembles that
+added recapture-specialist checkpoints (not part of this release) were retired
+2026-07-12 to keep the captured lever within the inference budget.
 
 Env:
   VARIANT=main|fb5|plain — selects which Kaggle final pick to reproduce
@@ -250,7 +251,7 @@ def stage_captured(sc: pd.DataFrame, images_dir: Path, work: Path,
         assert len(cap) == int(sc.captured.sum()), "captured FC/FD coverage mismatch"
         cap["fc"] = cap[FC_MEMBERS].mean(axis=1)
         cap["fd"] = cap[FD_MEMBERS].mean(axis=1)
-    # ens3 = FB + FC + FD equal mean-rank (exp16; legacy families dropped 07-12).
+    # ens3 = FB + FC + FD equal mean-rank (exp16).
     # main: fc/fd ranks reuse the 3-way core scores already in sc = zero extra GPU.
     cols = ["fb", "fc", "fd"]
     for col in cols:

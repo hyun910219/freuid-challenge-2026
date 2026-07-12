@@ -11,10 +11,10 @@ Two final picks, one pipeline (--variant):
                    scored on the captured subset only (budget tier TTA/noTTA/OFF
                    at the CONSERVATIVE A100 factor — mirrors prepare_submission.py).
 
-Frozen decisions encoded here (evidence: plan/experiment_log.md + memory):
-  - Legacy captured-extras families (lora_f0/pc_f0/recapinv_f0/g1_bestof, 9 ckpt)
-    REMOVED 2026-07-12 (user decision; 62-64% of the lever GPU cost) — the
-    captured-internal reorder is ens3 = FB + FC + FD everywhere (exp16).
+Frozen decisions encoded here:
+  - The captured-internal reorder is ens3 = FB + FC + FD everywhere (exp16).
+    Earlier ensembles that added recapture-specialist checkpoints (not part of
+    this release) were retired 2026-07-12 to keep the lever within the GPU budget.
   - Public rows byte-identical, row order preserved (whole-file-metric bug mitigation).
   - RAW scores only — NO per-type/domain normalization (p2_norm_sim: all negative).
   - fold-agg = plain mean (rank/median/trimmed probes all negative);
@@ -296,7 +296,7 @@ def stage_combine(args, work: Path) -> pd.DataFrame:
 # ---------------------------------------------------------------- stage: captured
 def stage_captured(args, work: Path) -> None:
     """capShift(delta in sigmoid space, per backbone) + captured-internal ens3
-    reorder (FB + FC + FD equal mean-rank; exp16 — legacy families removed 07-12).
+    reorder (FB + FC + FD equal mean-rank; exp16).
 
     Requires human GO (--go-captured) after reviewing inventory resolution table:
     detection on UNSEEN private types is frequency-based and must look sane first.
@@ -360,8 +360,8 @@ def stage_captured(args, work: Path) -> None:
         cap["fc"] = cap[FC_MEMBERS].mean(axis=1)
         cap["fd"] = cap[FD_MEMBERS].mean(axis=1)
 
-    # 3) ens3 mean-rank within captured (exp16, ens7-minus-legacy; the reorder
-    #    mechanic itself is LB-verified: 0.01524 -> 0.01252 with ens7 members)
+    # 3) ens3 mean-rank within captured (exp16; the reorder mechanic itself is
+    #    public-LB verified: 0.01524 -> 0.01252 as the reorder ensemble grew)
     cols = ["fb", "fc", "fd"]
     for col in cols:
         cap[f"rk_{col}"] = cap[col].rank(method="average")

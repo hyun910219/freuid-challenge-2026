@@ -1,4 +1,4 @@
-# ff_c_fold4 — FC frozen OpenCLIP ViT-L/336 + LoRA(q/k/v last-8) @448, g1 on. GENERATED (FB recipe, backbone+norm만 변경).
+# ff_c_fold4 — FC frozen OpenCLIP ViT-L/336 + LoRA(q/k/v last-8) @448, g1 on. GENERATED (FB recipe, only backbone+norm changed).
 run_name: ff_c_fold4
 
 data:

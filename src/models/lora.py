@@ -2,10 +2,10 @@
 
 PORT of efs/ml_workspace/kaggle/src/models/lora.py (verbatim; clean already).
 
-근거(deep-research 2026-06-27): frozen backbone + LoRA on q/k/v 는 pretrained
-일반화 prior 를 보존하고 digital-forgery 편향 overfit 을 줄이는 저비용 cross-domain
-레시피(C2P-CLIP AAAI2025). 학습 후 merge 하면 표준 BinaryClassifier state_dict 가
-되어 추론/앙상블 스크립트가 그대로 로드한다(구조 불변).
+Rationale (deep-research 2026-06-27): frozen backbone + LoRA on q/k/v is a low-cost
+cross-domain recipe that preserves the pretrained generalization prior and reduces
+digital-forgery bias overfit (C2P-CLIP AAAI2025). After training, merging yields a
+standard BinaryClassifier state_dict, so inference/ensemble scripts load it as-is (structure unchanged).
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from torch import nn
 
 
 class LoRALinear(nn.Module):
-    """base(frozen) Linear + low-rank delta. B=0 초기화라 초기 delta=0(학습 시작 시 항등)."""
+    """base(frozen) Linear + low-rank delta. B=0 init so initial delta=0 (identity at training start)."""
 
     def __init__(self, base: nn.Linear, r: int, alpha: float, dropout: float = 0.0):
         super().__init__()
@@ -60,9 +60,9 @@ def _target_attns(model):
 
 def inject_lora(model, r: int = 16, alpha: float = 32, targets=("qkv",), dropout: float = 0.0,
                 last_n: int | None = None):
-    """transformer block 의 attn.{targets} Linear 를 LoRALinear 로 교체.
+    """Replace the transformer block's attn.{targets} Linear with LoRALinear.
 
-    last_n 지정 시 마지막 N block 에만 주입 → backward 깊이 제한(속도↑, early 일반특징 보존).
+    When last_n is set, inject only into the last N blocks -> limits backward depth (faster, preserves early general features).
     """
     bb = getattr(model, "backbone", None)
     if bb is None or not hasattr(bb, "blocks"):
@@ -84,7 +84,7 @@ def inject_lora(model, r: int = 16, alpha: float = 32, targets=("qkv",), dropout
 
 
 def merge_lora(model):
-    """LoRALinear → merged 표준 Linear 로 in-place 교체(추론 호환)."""
+    """In-place replace LoRALinear -> merged standard Linear (inference-compatible)."""
     for attn in _target_attns(model):
         for name, child in list(attn.named_children()):
             if isinstance(child, LoRALinear):

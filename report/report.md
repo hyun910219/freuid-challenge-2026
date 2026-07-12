@@ -73,10 +73,12 @@ held-out EGYPT) and pooled OOF by another -57%.
    observed captured fraction (captured ordering is robust to the TTA
    reduction, spearman 0.9958); capShift is CPU-side and always applies.
    The reorder mechanic is public-LB verified (0.01524 -> 0.01304 -> 0.01252
-   with progressively larger member sets that included four legacy DINOv2-L
-   families); the shipped ens3 keeps the three core backbones only — the
-   legacy members were dropped 2026-07-12 for inference-budget robustness
-   (they accounted for 62-64% of the captured-lever GPU cost).
+   as the captured-reorder ensemble grew); the shipped ens3 orders captured
+   rows by the three released backbones only (FB + FC + FD). The intermediate
+   0.01304 / 0.01252 points additionally used recapture-specialist
+   checkpoints that are not part of this release; the released package
+   reproduces the ens3 composition, which keeps the captured lever within
+   the inference budget.
 6. Output = strict total order -> (pos+0.5)/n rank values (metric is
    rank-only; ties score as constants).
 
@@ -124,11 +126,16 @@ public composition).
 |---|---|
 | FB5 (frozen DINOv2-L + LoRA) | 0.01870 |
 | + capShift (delta 0.75) | 0.01524 |
-| + captured ens5 reorder | 0.01304 |
-| + FC/FD in captured reorder (ens7) | 0.01252 |
-| + captured ens3 reorder (fb5 pick composition, legacy dropped) | [07-13] |
+| + captured reorder, early ensemble (¹) | 0.01304 |
+| + captured reorder, all backbones (¹) | 0.01252 |
+| + captured ens3 reorder (released FB+FC+FD) | [07-13] |
 | Private main pick (FB4+FC3+FD3 rank-mean + captured lever) | [D-DAY] |
 | Private fb5 pick (FB5 hflip-TTA + captured lever) | [D-DAY] |
+
+(¹) These two intermediate public-LB points additionally used
+recapture-specialist checkpoints that are not part of this release. They are
+shown only to document the reorder mechanic's progression; the released
+package reproduces the ens3 (FB+FC+FD) composition.
 
 Blind LTO (held-out country, freuid score, lower=better):
 

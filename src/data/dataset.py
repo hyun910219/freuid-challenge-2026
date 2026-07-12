@@ -39,7 +39,7 @@ class FreuidDataset(Dataset):
         self.id_col = id_col
         self.path_col = path_col
         self.label_col = label_col
-        # bona -> 합성 국소 필드조작 attack (train 전용)
+        # bona -> synthetic local field-manipulation attack (train only)
         self.tamper_synth_p = float(tamper_synth_p) if mode == "train" else 0.0
         self.g1 = bool(g1)
         if mode not in ("train", "valid", "test"):
@@ -78,7 +78,7 @@ class FreuidDataset(Dataset):
 
             from .tamper import apply_field_tamper
 
-            # deterministic per-(seed, idx) rng — 재현성 + worker 간 독립
+            # deterministic per-(seed, idx) rng — reproducibility + independence across workers
             rng = np.random.default_rng((torch.initial_seed() + idx * 2654435761) % 2**63)
             if rng.random() < self.tamper_synth_p:
                 img = apply_field_tamper(img, rng, g1=self.g1)

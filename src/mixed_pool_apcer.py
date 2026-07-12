@@ -20,7 +20,7 @@ Outputs (all via the official scorer, src.eval_freuid):
 
 Interpretation: a model that scores external (unseen-domain) bona LOW keeps
 thr_mixed ≈ thr_val and apcer_inflation ≈ 0 -> robust for private. This is a
-"방향 신호" (regression guard / tiebreaker), NOT a gate (04 §5).
+"directional signal" (regression guard / tiebreaker), NOT a gate (04 §5).
 
 No retraining, no GPU, no cv2 — consumes score csvs only. Runnable self-test:
     python3 kaggle/final/src/mixed_pool_apcer.py

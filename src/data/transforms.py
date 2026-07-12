@@ -2,9 +2,9 @@
 
 PORT of efs/ml_workspace/kaggle/src/data/transforms.py, trimmed to the verified
 FA/FB path: base geometric/color aug + ``domain_aug`` (JPEG/blur/tone/gamma/
-downscale/perspective) + ``aspect_resize`` (fable v1: 전 type aspect≈1.585 동일 →
-직사각 resize, crop 손실 0 · padding leak 0). Dropped experimental branches:
-color_norm(ShadesOfGray, RAW>CAL 음성결과) / recapture_aug / short_side_crop.
+downscale/perspective) + ``aspect_resize`` (fable v1: all types share aspect≈1.585 →
+rectangular resize, 0 crop loss · 0 padding leak). Dropped experimental branches:
+color_norm(ShadesOfGray, RAW>CAL negative result) / recapture_aug / short_side_crop.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ def shades_of_gray(image: np.ndarray, p: int = 6) -> np.ndarray:
 
 class ShadesOfGray(ImageOnlyTransform):
     """C-shot V2: STOCHASTIC SoG aug (p<1). Differs from the dropped color_norm
-    branch, which applied SoG deterministically (p=1, train+eval, RAW>CAL 음성) —
+    branch, which applied SoG deterministically (p=1, train+eval, RAW>CAL negative) —
     here it randomizes the color-cast axis train-only, eval untouched."""
 
     def __init__(self, p_norm: int = 6, p: float = 0.5):
@@ -45,7 +45,7 @@ class ShadesOfGray(ImageOnlyTransform):
 
 def _resize_ops(image_size, resize_strategy: str) -> list:
     if resize_strategy == "aspect_resize":
-        # image_size = (H, W) 직사각 resize
+        # image_size = (H, W) rectangular resize
         h, w = image_size
         return [A.Resize(height=h, width=w)]
     # letterbox fallback (int image_size)
@@ -98,7 +98,7 @@ def build_transforms(
     std: tuple | None = None,
     sog_p: float = 0.0,
 ) -> A.Compose:
-    """``mode`` ∈ {train, valid, test}. valid/test 는 동일 변환(aug 없음)."""
+    """``mode`` ∈ {train, valid, test}. valid/test use the same transform (no aug)."""
     m = tuple(mean) if mean is not None else IMAGENET_MEAN
     s = tuple(std) if std is not None else IMAGENET_STD
     if mode == "train":

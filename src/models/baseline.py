@@ -15,11 +15,11 @@ from torch import nn
 
 
 class BinaryClassifier(nn.Module):
-    """timm backbone + single-logit head (sigmoid 은 loss/추론에서 처리).
+    """timm backbone + single-logit head (sigmoid handled in loss/inference).
 
-    freeze_backbone=True + unfreeze_last_blocks=N: 마지막 N transformer block +
-    norm + head 만 학습 (large 모델 over-specialization 방지). LoRA(FB)는 이 위에
-    inject_lora 로 q/k/v adapter 를 얹고 backbone 을 완전 freeze(unfreeze_last_blocks=0).
+    freeze_backbone=True + unfreeze_last_blocks=N: train only the last N transformer
+    blocks + norm + head (prevents over-specialization of the large model). LoRA(FB)
+    stacks q/k/v adapters on top via inject_lora and fully freezes the backbone (unfreeze_last_blocks=0).
     """
 
     def __init__(
