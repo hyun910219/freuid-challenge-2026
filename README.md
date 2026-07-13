@@ -12,21 +12,20 @@ for recaptured (screen/print-recapture) images:
 
 | Component | Detail |
 |---|---|
-| **FB** | frozen DINOv2-L (`vit_large_patch14_dinov2.lvd142m`) + merged LoRA (q/k/v last-8, r16), 5 folds @448×714 (main pick: 4-fold budget trim) |
+| **FB** | frozen DINOv2-L (`vit_large_patch14_dinov2.lvd142m`) + merged LoRA (q/k/v last-8, r16), 5 folds @448×714 |
 | **FC** | frozen OpenCLIP ViT-L/336 (`vit_large_patch14_clip_336.openai_ft_in12k_in1k`) + merged LoRA, 3 folds, CLIP norm |
 | **FD** | frozen SigLIP2-L (`vit_large_patch16_siglip_384.v2_webli`) + merged LoRA, 3 folds @448×720, 0.5/0.5 norm |
 | Fold aggregation | plain mean of fold scores (per backbone) |
 | Backbone combine | equal rank-mean of the 3 backbones (cross-domain rule) |
 | Captured detection | resolution-frequency: clusters < 0.5% of rows = captured |
 | capShift | score shift δ=0.75 in logit space, per backbone, captured rows only |
-| Captured reorder | within-captured equal mean-rank of the 3 backbones (**ens3** = FB + FC + FD) |
+| Captured reorder | within-captured equal mean-rank of the 3 backbones (**ens3** = FB5 + FC3 + FD3) |
 | Output | strict total order → `(pos+0.5)/n` rank values |
 
 Frozen backbones preserve the pretraining generalization prior; fine-tuned variants
-collapsed on blind held-out countries (leave-type-out screening). The main pick's fold
-counts (4/3/3) are a budget trim so the 3-backbone core fits the 6h/A100 cap; the fb5
-pick runs all 5 FB folds with hflip-TTA and scores FC/FD on the captured subset only.
-Details in `report/report.md`.
+collapsed on blind held-out countries (leave-type-out screening). The pick runs all 5 FB
+folds with hflip-TTA as the core and scores FC3/FD3 on the captured subset only, so the
+captured ens3 reorder stays within the 6h/A100 cap. Details in `report/report.md`.
 
 ## Contract (must always hold)
 
@@ -34,7 +33,7 @@ Details in `report/report.md`.
 |---|---|
 | Network | Inference runs with `--network none`. No runtime downloads. |
 | Weights | 11 checkpoints COPY'd into the image at build time. |
-| Runtime | Fits **< 6 h on a single A100** for both picks: main = FB4+FC3+FD3 bf16 noTTA (~4.9h @ A10G/2.2, ~5.4h @ conservative A10G/2.0); fb5 = FB5 bf16 hflip-TTA (~5.4h @ /2.0) + FC3/FD3 on captured rows only, budget-tiered (TTA / noTTA / off). |
+| Runtime | Fits **< 6 h on a single A100**: FB5 bf16 hflip-TTA core (~5.4h @ conservative A10G/2.0) + FC3/FD3 on captured rows only, budget-tiered (TTA / noTTA / off). |
 | Input | Flat, read-only dir at `/data`. `id` = filename **without** extension. |
 | Extensions | `.jpeg .jpg .png .webp .bmp .tif .tiff`. No CSV/manifest/subfolders assumed. |
 | Output | Exactly `/submissions/submission.csv`, header `id,label`. One row per image; no missing/extra/duplicate ids. Nothing written outside `/submissions/`. |
@@ -75,22 +74,18 @@ docker run --rm --network none --gpus all --shm-size=8g \
 Output → `out/submission.csv`. `--shm-size=8g` lets DataLoader workers use shared memory;
 without it the entrypoint auto-degrades to `num_workers=0` (correct, slower).
 
-### Two selected final picks (same image, same weights)
+### The final pick (fb5)
 
-Both Kaggle final picks come from this one image and the same frozen weights; they differ
-only by an inference-time flag (inference orchestration, allowed under the code freeze):
+A single pick — no variant flags. `docker run` reproduces it directly:
 
-| Pick | Command (append to `docker run`) | Method difference |
-|---|---|---|
-| **main** (default) | *(no extra flag)* | 3-way core (FB4+FC3+FD3, noTTA); captured lever = capShift(δ=0.75) + ens3 within-captured mean-rank reorder (FC/FD ranks reuse the core scores — zero extra GPU) |
-| **fb5** | `-e VARIANT=fb5` | FB5 core (all 5 FB folds, hflip-TTA); captured lever = capShift(FB) + ens3 reorder with FC3/FD3 scored on the captured rows only (budget-tiered) |
+- **core**: FB5 (all 5 FB folds of DINOv2-L), hflip-TTA → FB score order.
+- **captured lever**: capShift(δ=0.75) + within-captured **ens3** mean-rank reorder
+  (**FB5 + FC3 + FD3**), with FC3 (OpenCLIP ViT-L/336) + FD3 (SigLIP2-L/16-384) scored
+  on the captured rows only, tiered (TTA/noTTA/off) by the 6h/A100 budget.
 
 ```bash
-docker run ... freuid-repro:local                && sha256sum out/submission.csv  # Pick 1 (main)
-docker run ... -e VARIANT=fb5 freuid-repro:local && sha256sum out/submission.csv  # Pick 2 (fb5)
+docker run ... freuid-repro:local && sha256sum out/submission.csv
 ```
-
-(`VARIANT=plain` is also available — 3-way core with the captured lever off, diagnostic.)
 
 ## Validate
 

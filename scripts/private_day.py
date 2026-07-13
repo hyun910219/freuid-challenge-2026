@@ -1,29 +1,23 @@
 """PRIVATE DAY one-shot pipeline (FREUID 2026, private test release ~07-13).
 
-Two final picks, one pipeline (--variant):
-  main (default) — base submissions/2026-07-12_ffb5_capReorder_ens7.csv (LB 0.01252).
-                   Private rows = FB4 + FC3 + FD3 equal rank-mean, bf16 noTTA;
-                   captured lever = capShift + ens3 reorder (FC/FD ranks reuse
-                   the core scores — zero extra GPU, no budget tier).
-  fb5            — base submissions/2026-07-13_ffb5_capReorder_ens3.csv (hedge).
-                   Private rows = FB5 (all 5 folds) hflip-TTA, score order;
-                   captured lever = capShift(FB) + ens3 reorder with FC3/FD3
-                   scored on the captured subset only (budget tier TTA/noTTA/OFF
-                   at the CONSERVATIVE A100 factor — mirrors prepare_submission.py).
+Single final pick (fb5):
+  base submissions/2026-07-13_ffb5_capReorder_ens3.csv.
+  Private rows = FB5 (all 5 folds) hflip-TTA, score order;
+  captured lever = capShift(FB) + ens3 reorder with FC3/FD3 scored on the
+  captured subset only (budget tier TTA/noTTA/OFF at the CONSERVATIVE A100
+  factor — mirrors prepare_submission.py).
 
 Frozen decisions encoded here:
-  - The captured-internal reorder is ens3 = FB + FC + FD everywhere (exp16).
+  - The captured-internal reorder is ens3 = FB5 + FC3 + FD3 (exp16).
     Earlier ensembles that added recapture-specialist checkpoints (not part of
     this release) were retired 2026-07-12 to keep the lever within the GPU budget.
   - Public rows byte-identical, row order preserved (whole-file-metric bug mitigation).
   - RAW scores only — NO per-type/domain normalization (p2_norm_sim: all negative).
   - fold-agg = plain mean (rank/median/trimmed probes all negative);
-    cross-backbone = equal RANK-MEAN (FD gate: 3way GUINEA -4.6% / EGYPT -54%;
-    pooled OOF 3way -57%; fold trim = weakest-OOF-first per backbone).
+    cross-backbone = equal RANK-MEAN (single backbone -> FB score order).
   - capShift delta=0.75 sigmoid space (exp06d sweep, LB 0.01870 -> 0.01524).
   - Inference budget: 6h/A100 cap. bench (A10G bs48 bf16 noTTA): FB 27.1 /
-    FC 25.8 / FD 27.7 ms/img/ckpt; hflip-TTA = 2x. 3-way core 4.86h@2.2,
-    5.38h@2.0; FB5+TTA core 5.38h@2.0.
+    FC 25.8 / FD 27.7 ms/img/ckpt; hflip-TTA = 2x. FB5+TTA core 5.38h@2.0.
 
 Stages (resumable; per-member .DONE sentinels):
   inventory -> infer -> combine -> [captured] -> assemble
@@ -32,7 +26,6 @@ Run on g5 (GPU box, images local):
   cd /home/ec2-user/workspace/efs/ml_workspace/kaggle/final && \
   PYTHONPATH=. PYTHONUNBUFFERED=1 /home/ec2-user/extenv/bin/python -u \
     scripts/private_day.py --stage inventory --images-dir <PRIVATE_IMG_DIR>
-  (fb5 pick: add --variant fb5 — separate default work dir private_day_fb5)
 
 Dry-run (mechanics check on public_test, small N, throwaway assemble):
   ... scripts/private_day.py --stage all --dry-run 240 \
@@ -60,19 +53,15 @@ DATA = Path("/home/ec2-user/data/freuid")
 OUT = Path("/home/ec2-user/workspace/efs/ml_workspace/kaggle/outputs")
 # EFS copies (== ml-workspace originals) — visible from g5
 SUB_DIR = Path("/home/ec2-user/workspace/efs/ml_workspace/kaggle/submissions")
-BASE_SUB = {"main": SUB_DIR / "2026-07-12_ffb5_capReorder_ens7.csv",
-            "fb5": SUB_DIR / "2026-07-13_ffb5_capReorder_ens3.csv"}
+BASE_SUB = SUB_DIR / "2026-07-13_ffb5_capReorder_ens3.csv"
 
-# main-track members: ckpt at OUT/<config>/best.ckpt
-# Trimmed to fit 6h cap with FD added (drop = weakest pooled-OOF folds per backbone;
-# dropped ckpts stay on EFS): FB -fold1(.0041), FC -fold3(.0099)/fold4(.0141),
-# FD -fold0_v2(.0043)/fold4(.0055).
-FB_MEMBERS = ["ff_b_fold0", "ff_b_fold2", "ff_b_fold3_v2", "ff_b_fold4"]
+# members: ckpt at OUT/<config>/best.ckpt
+# fb5 core: full 5-fold FB, hflip-TTA (the composition behind the base file).
+# FC3/FD3 (captured lever) score the captured subset only.
+FB5_MEMBERS = ["ff_b_fold0", "ff_b_fold1", "ff_b_fold2", "ff_b_fold3_v2", "ff_b_fold4"]
 FC_MEMBERS = ["ff_c_fold0", "ff_c_fold1", "ff_c_fold2"]
 FD_MEMBERS = ["ff_d_fold1", "ff_d_fold2", "ff_d_fold3"]
-BACKBONES = {"fb": FB_MEMBERS, "fc": FC_MEMBERS, "fd": FD_MEMBERS}
-# fb5-track core: full 5-fold FB, hflip-TTA (the composition behind the base file)
-FB5_MEMBERS = ["ff_b_fold0", "ff_b_fold1", "ff_b_fold2", "ff_b_fold3_v2", "ff_b_fold4"]
+CORE_BB = {"fb": FB5_MEMBERS}
 
 # bench constants (outputs/_bench_infer.log + bench_fd_throughput.py, A10G bs48 bf16)
 MS_CORE = {"fb": 27.1, "fc": 25.8, "fd": 27.7}   # noTTA ms/img/ckpt; TTA = 2x
@@ -86,10 +75,6 @@ PUBLIC_MAIN_RES = {(1585, 1000), (1584, 1000), (1000, 630), (1387, 875)}  # cros
 # ---------------------------------------------------------------- utilities
 def log(msg: str) -> None:
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
-
-
-def variant_backbones(variant: str) -> dict[str, list[str]]:
-    return {"fb": FB5_MEMBERS} if variant == "fb5" else dict(BACKBONES)
 
 
 def public_ids() -> set[str]:
@@ -182,26 +167,21 @@ def stage_inventory(args, work: Path) -> None:
     # budget table (docker reproducibility = FULL test through every used member)
     def a100h(n_img, ms, factor):  # noqa: E306
         return n_img * ms / 1000 / 3600 / factor
-    bbs = variant_backbones(args.variant)
-    tta_x = 2 if args.variant == "fb5" else 1
-    core_ms = sum(len(mem) * MS_CORE[b] for b, mem in bbs.items()) * tta_x
+    bbs = CORE_BB
+    core_ms = sum(len(mem) * MS_CORE[b] for b, mem in bbs.items()) * 2   # fb5 core = TTA
     core_h = a100h(N_TEST_FULL, core_ms, A100_FACTOR)
     core_h_cons = a100h(N_TEST_FULL, core_ms, A100_FACTOR_CONSERVATIVE)
-    log(f"budget (A100eq, FULL-test docker run, variant={args.variant}):")
+    log("budget (A100eq, FULL-test docker run, fb5):")
     log(f"    core {'+'.join(f'{b.upper()}{len(mem)}' for b, mem in bbs.items())} "
-        f"{'TTA' if tta_x == 2 else 'noTTA'} = {core_h:.2f}h @x{A100_FACTOR} / "
+        f"TTA = {core_h:.2f}h @x{A100_FACTOR} / "
         f"{core_h_cons:.2f}h @x{A100_FACTOR_CONSERVATIVE} (cap {CAP_H}h)")
-    if args.variant == "main":
-        log("    captured lever = capShift + ens3 from core scores -> zero extra GPU")
-        wall = core_h * A100_FACTOR * len(inv) / N_TEST_FULL
-    else:
-        ext_ms = len(FC_MEMBERS) * MS_CORE["fc"] + len(FD_MEMBERS) * MS_CORE["fd"]
-        ext_tta = a100h(int(N_TEST_FULL * c), ext_ms * 2, A100_FACTOR_CONSERVATIVE)
-        ext_nt = a100h(int(N_TEST_FULL * c), ext_ms, A100_FACTOR_CONSERVATIVE)
-        log(f"    captured FC3+FD3 @c={c:.1%} @x{A100_FACTOR_CONSERVATIVE}: "
-            f"TTA {ext_tta:.2f}h / noTTA {ext_nt:.2f}h -> tier {fb5_extras_tier(c)} "
-            f"(decided again in captured stage; capShift always applies)")
-        wall = (core_h + ext_tta) * A100_FACTOR * len(inv) / N_TEST_FULL
+    ext_ms = len(FC_MEMBERS) * MS_CORE["fc"] + len(FD_MEMBERS) * MS_CORE["fd"]
+    ext_tta = a100h(int(N_TEST_FULL * c), ext_ms * 2, A100_FACTOR_CONSERVATIVE)
+    ext_nt = a100h(int(N_TEST_FULL * c), ext_ms, A100_FACTOR_CONSERVATIVE)
+    log(f"    captured FC3+FD3 @c={c:.1%} @x{A100_FACTOR_CONSERVATIVE}: "
+        f"TTA {ext_tta:.2f}h / noTTA {ext_nt:.2f}h -> tier {fb5_extras_tier(c)} "
+        f"(decided again in captured stage; capShift always applies)")
+    wall = (core_h + ext_tta) * A100_FACTOR * len(inv) / N_TEST_FULL
     log(f"    today's g5 wall (target rows only): ~{wall:.1f}h")
 
 
@@ -245,8 +225,8 @@ def _predict_bf16(cfg, ckpt, test_csv, image_root, tta: bool = False) -> pd.Data
 
 def stage_infer(args, work: Path) -> None:
     from omegaconf import OmegaConf
-    bbs = variant_backbones(args.variant)
-    tta = args.variant == "fb5"        # fb5 core = hflip-TTA (base-file composition)
+    bbs = CORE_BB
+    tta = True                         # fb5 core = hflip-TTA (base-file composition)
     inv = pd.read_csv(work / "inventory.csv", dtype={"id": str})
     test_csv = work / "test_infer.csv"
     inv.rename(columns={"path": "image_path"})[["id", "image_path"]].to_csv(
@@ -270,7 +250,7 @@ def stage_infer(args, work: Path) -> None:
 
 # ---------------------------------------------------------------- stage: combine
 def stage_combine(args, work: Path) -> pd.DataFrame:
-    bbs = variant_backbones(args.variant)
+    bbs = CORE_BB
     inv = pd.read_csv(work / "inventory.csv", dtype={"id": str})
     merged = inv[["id", "captured"]].copy()
     for name in [m for mem in bbs.values() for m in mem]:
@@ -304,7 +284,7 @@ def stage_captured(args, work: Path) -> None:
     if not args.go_captured:
         log("captured stage requires --go-captured (human gate). Skipping.")
         return
-    bbs = variant_backbones(args.variant)
+    bbs = CORE_BB
     sc = pd.read_csv(work / "private_scores.csv", dtype={"id": str})
     cap = sc[sc.captured].copy()
     c = len(cap) / len(sc)
@@ -321,44 +301,43 @@ def stage_captured(args, work: Path) -> None:
         sc.loc[m, f"{b}_s"] = logit_shift(sc.loc[m, b].to_numpy(), CAP_DELTA)
     sc["combined"] = sum(rank01(sc[f"{b}_s"]) for b in bbs) / len(bbs)
 
-    # 2) ens3 member scores. main: fc/fd already in sc (core) = zero extra GPU.
-    #    fb5: FC3/FD3 scored on the captured subset only, budget-tiered at the
-    #    CONSERVATIVE A100 factor (exp09: captured order TTA-robust, sp 0.9958).
-    if args.variant == "fb5":
-        from omegaconf import OmegaConf
-        tier = fb5_extras_tier(c)
-        log(f"fb5 captured FC/FD tier = {tier} (c={c:.2%} "
-            f"@x{A100_FACTOR_CONSERVATIVE})")
-        if tier == "OFF":
-            sc["ens3"] = np.nan
-            sc.to_csv(work / "private_scores_captured.csv", index=False,
-                      float_format="%.12g")
-            log("captured FC/FD over budget -> capShift only, no reorder")
-            return
-        cap_csv = work / "captured_infer.csv"
-        inv = pd.read_csv(work / "inventory.csv", dtype={"id": str})
-        inv[inv.captured].rename(columns={"path": "image_path"})[
-            ["id", "image_path"]].to_csv(cap_csv, index=False)
-        for name in FC_MEMBERS + FD_MEMBERS:
-            out_csv = work / f"scores_cap_{name}.csv"
-            done = work / f"scores_cap_{name}.DONE"
-            if done.exists():
-                log(f"skip cap {name} (.DONE)")
-            else:
-                cfg = OmegaConf.load(FINAL / "configs" / f"{name}.yaml")
-                ckpt = OUT / name / "best.ckpt"
-                assert ckpt.exists(), f"missing ckpt {ckpt}"
-                log(f"infer cap {name} (bf16 {tier} bs48, n={len(cap)}) ...")
-                df = _predict_bf16(cfg, ckpt, cap_csv, args.images_dir,
-                                   tta=(tier == "TTA"))
-                assert len(df) == len(cap), f"{name}: {len(df)} != {len(cap)}"
-                df.to_csv(out_csv, index=False, float_format="%.10f")
-                done.touch()
-            df = pd.read_csv(out_csv, dtype={"id": str})
-            cap = cap.merge(df.rename(columns={"score": name}), on="id", how="inner")
-        assert len(cap) == sc.captured.sum(), "captured FC/FD coverage mismatch"
-        cap["fc"] = cap[FC_MEMBERS].mean(axis=1)
-        cap["fd"] = cap[FD_MEMBERS].mean(axis=1)
+    # 2) ens3 member scores: FC3/FD3 scored on the captured subset only,
+    #    budget-tiered at the CONSERVATIVE A100 factor (exp09: captured order
+    #    TTA-robust, sp 0.9958).
+    from omegaconf import OmegaConf
+    tier = fb5_extras_tier(c)
+    log(f"fb5 captured FC/FD tier = {tier} (c={c:.2%} "
+        f"@x{A100_FACTOR_CONSERVATIVE})")
+    if tier == "OFF":
+        sc["ens3"] = np.nan
+        sc.to_csv(work / "private_scores_captured.csv", index=False,
+                  float_format="%.12g")
+        log("captured FC/FD over budget -> capShift only, no reorder")
+        return
+    cap_csv = work / "captured_infer.csv"
+    inv = pd.read_csv(work / "inventory.csv", dtype={"id": str})
+    inv[inv.captured].rename(columns={"path": "image_path"})[
+        ["id", "image_path"]].to_csv(cap_csv, index=False)
+    for name in FC_MEMBERS + FD_MEMBERS:
+        out_csv = work / f"scores_cap_{name}.csv"
+        done = work / f"scores_cap_{name}.DONE"
+        if done.exists():
+            log(f"skip cap {name} (.DONE)")
+        else:
+            cfg = OmegaConf.load(FINAL / "configs" / f"{name}.yaml")
+            ckpt = OUT / name / "best.ckpt"
+            assert ckpt.exists(), f"missing ckpt {ckpt}"
+            log(f"infer cap {name} (bf16 {tier} bs48, n={len(cap)}) ...")
+            df = _predict_bf16(cfg, ckpt, cap_csv, args.images_dir,
+                               tta=(tier == "TTA"))
+            assert len(df) == len(cap), f"{name}: {len(df)} != {len(cap)}"
+            df.to_csv(out_csv, index=False, float_format="%.10f")
+            done.touch()
+        df = pd.read_csv(out_csv, dtype={"id": str})
+        cap = cap.merge(df.rename(columns={"score": name}), on="id", how="inner")
+    assert len(cap) == sc.captured.sum(), "captured FC/FD coverage mismatch"
+    cap["fc"] = cap[FC_MEMBERS].mean(axis=1)
+    cap["fd"] = cap[FD_MEMBERS].mean(axis=1)
 
     # 3) ens3 mean-rank within captured (exp16; the reorder mechanic itself is
     #    public-LB verified: 0.01524 -> 0.01252 as the reorder ensemble grew)
@@ -432,8 +411,6 @@ def main() -> None:
     p.add_argument("--stage", required=True,
                    choices=["inventory", "infer", "combine", "captured", "assemble", "all"])
     p.add_argument("--images-dir", required=True)
-    p.add_argument("--variant", default="main", choices=["main", "fb5"],
-                   help="which final pick to produce (separate work dir + base file)")
     p.add_argument("--work", default=None)
     p.add_argument("--base", default=None)
     p.add_argument("--out", default=None)
@@ -443,15 +420,14 @@ def main() -> None:
                    help="human GO for captured lever (after reviewing inventory)")
     args = p.parse_args()
     if args.work is None:
-        args.work = str(OUT / ("private_day" if args.variant == "main"
-                               else "private_day_fb5"))
+        args.work = str(OUT / "private_day_fb5")
     if args.base is None:
-        args.base = str(BASE_SUB[args.variant])
+        args.base = str(BASE_SUB)
     work = Path(args.work)
     if args.dry_run:
         work = work / "dryrun"
     work.mkdir(parents=True, exist_ok=True)
-    log(f"variant: {args.variant} | work dir: {work} | base: {Path(args.base).name}")
+    log(f"pick: fb5 | work dir: {work} | base: {Path(args.base).name}")
 
     stages = ([args.stage] if args.stage != "all"
               else ["inventory", "infer", "combine", "captured", "assemble"])

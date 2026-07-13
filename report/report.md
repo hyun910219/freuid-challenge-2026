@@ -30,10 +30,10 @@ inference-side lever for recaptured images.
   identical recipe, input 448x720, 0.5/0.5 normalization. A third,
   independently-pretrained prior (sigmoid image-text, WebLI).
 
-All backbones are trained as 5-fold CV. The **main pick** uses a **4/3/3
-fold subset (FB/FC/FD)** — the weakest pooled-OOF folds per backbone were
-dropped so the three-backbone core fits the 6h/A100 inference cap (Sec. 4);
-the **fb5 pick** runs all 5 FB folds with hflip-TTA as its core.
+All backbones are trained as 5-fold CV. The final pick uses all **5 FB folds**
+with hflip-TTA as its core; **FC3** (3 folds) and **FD3** (3 folds) score the
+captured subset only, so the captured ens3 reorder stays within the 6h/A100
+inference cap (Sec. 4).
 
 Blind leave-country-out (LTO) evidence for the frozen-vs-finetuned choice:
 fine-tuned FA collapses to 0.18 on held-out GUINEA; frozen FB reaches 0.030.
@@ -66,33 +66,31 @@ held-out EGYPT) and pooled OOF by another -57%.
    tail (APCER at 1% BPCER dominates the metric). Public-LB verified:
    0.01870 -> 0.01524.
 5. **Captured-internal reorder (ens3)**: within captured rows, order by the
-   equal mean-rank of the three backbones (FB + FC + FD). In the main pick
-   the FC/FD ranks reuse the core scores from step 1 at zero extra GPU cost;
-   in the fb5 pick FC3/FD3 are scored on the captured subset only, in a
-   TTA / noTTA / off tier chosen by the remaining inference budget at the
-   observed captured fraction (captured ordering is robust to the TTA
-   reduction, spearman 0.9958); capShift is CPU-side and always applies.
-   The reorder mechanic is public-LB verified (0.01524 -> 0.01304 -> 0.01252
-   as the captured-reorder ensemble grew); the shipped ens3 orders captured
-   rows by the three released backbones only (FB + FC + FD). The intermediate
-   0.01304 / 0.01252 points additionally used recapture-specialist
-   checkpoints that are not part of this release; the released package
-   reproduces the ens3 composition, which keeps the captured lever within
-   the inference budget.
+   equal mean-rank of the three backbones (FB5 + FC3 + FD3). FC3/FD3 are
+   scored on the captured subset only, in a TTA / noTTA / off tier chosen by
+   the remaining inference budget at the observed captured fraction (captured
+   ordering is robust to the TTA reduction, spearman 0.9958); capShift is
+   CPU-side and always applies. The reorder mechanic is public-LB verified
+   (0.01524 -> 0.01304 -> 0.01252 as the captured-reorder ensemble grew); the
+   shipped ens3 orders captured rows by the three released backbones only
+   (FB5 + FC3 + FD3). The intermediate 0.01304 / 0.01252 points additionally
+   used recapture-specialist checkpoints that are not part of this release;
+   the released package reproduces the ens3 composition, which keeps the
+   captured lever within the inference budget.
 6. Output = strict total order -> (pos+0.5)/n rank values (metric is
    rank-only; ties score as constants).
 
-Two final picks share this pipeline: **main** = the 3-way core (steps 1-6,
-noTTA); **fb5** = FB5 hflip-TTA core, where step 2 degenerates to the FB
-score order and FC/FD enter only through step 5.
+The single final pick (**fb5**) runs this pipeline with an FB5 hflip-TTA core:
+step 1 aggregates the 5 FB folds, step 2 degenerates to the FB score order,
+and FC3/FD3 enter only through the captured reorder in step 5.
 
 Precision: bf16 (rank-safety spearman vs fp32: FB 0.99992, FC 0.999799,
 FD 0.999627).
-Ensemble-level TTA: rejected by measurement — blind leave-country-out showed
-degradation (+27.8% on held-out EGYPT; hflip severely harms the CLIP backbone
-on documents), so the 3-way core runs noTTA. The FB-only fb5 pick keeps
-hflip-TTA (benign for the DINOv2 backbone; part of that pick's frozen
-public composition).
+Ensemble-level / cross-backbone TTA on the core was rejected by measurement —
+blind leave-country-out showed degradation (+27.8% on held-out EGYPT; hflip
+severely harms the CLIP backbone on documents). The FB5 core keeps hflip-TTA
+(benign for the DINOv2 backbone; part of the pick's frozen public
+composition), while FC3/FD3 touch only the captured subset.
 
 ## 3. Data
 
@@ -108,17 +106,15 @@ public composition).
 
 ## 4. Inference / Budget
 
-- Full test (142,818 images) through FB4+FC3+FD3 bf16 noTTA:
-  ~4.9h A100-equivalent at /2.2, ~5.3h at a conservative /2.0 (measured
-  27.1 / 25.8 / 27.7 ms/img/ckpt for FB / FC / FD on A10G), within the
-  6h/A100 budget. All 12+-fold member sets exceed the cap — hence the
-  4/3/3 weakest-OOF-first fold trim. torch.compile measured slower than
-  eager (x0.73-0.79) and is not used.
-- fb5 pick: FB5 bf16 hflip-TTA core ~5.4h at /2.0; its FC3/FD3 pass touches
-  captured rows only, in the budget tier of Sec. 2.3 step 5 (TTA up to
-  c<=9.8%, noTTA up to c<=19.6%, off beyond — capShift still applies).
+- Full test (142,818 images) through the FB5 bf16 hflip-TTA core: ~5.4h at a
+  conservative /2.0 A100-equivalent (measured 27.1 ms/img/ckpt for FB on A10G;
+  hflip-TTA = 2x), within the 6h/A100 budget. torch.compile measured slower
+  than eager (x0.73-0.79) and is not used.
+- The FC3/FD3 captured pass (25.8 / 27.7 ms/img/ckpt on A10G) touches captured
+  rows only, in the budget tier of Sec. 2.3 step 5 (TTA up to c<=9.8%, noTTA
+  up to c<=19.6%, off beyond — capShift still applies).
 - [D-DAY: actual private captured fraction c, captured-lever GO/NO-GO,
-  fb5 FC/FD tier, wall time]
+  FC/FD tier, wall time]
 
 ## 5. Results
 
@@ -128,14 +124,13 @@ public composition).
 | + capShift (delta 0.75) | 0.01524 |
 | + captured reorder, early ensemble (¹) | 0.01304 |
 | + captured reorder, all backbones (¹) | 0.01252 |
-| + captured ens3 reorder (released FB+FC+FD) | [07-13] |
-| Private main pick (FB4+FC3+FD3 rank-mean + captured lever) | [D-DAY] |
+| + captured ens3 reorder (released FB5+FC3+FD3) | [07-13] |
 | Private fb5 pick (FB5 hflip-TTA + captured lever) | [D-DAY] |
 
 (¹) These two intermediate public-LB points additionally used
 recapture-specialist checkpoints that are not part of this release. They are
 shown only to document the reorder mechanic's progression; the released
-package reproduces the ens3 (FB+FC+FD) composition.
+package reproduces the ens3 (FB5+FC3+FD3) composition.
 
 Blind LTO (held-out country, freuid score, lower=better):
 

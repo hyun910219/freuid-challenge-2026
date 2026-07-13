@@ -2,10 +2,8 @@
 # Built with network; RUN with NO network:
 #   docker run --rm --network none --gpus all --shm-size=8g \
 #       -v <IMAGES_DIR>:/data:ro -v <OUT_DIR>:/submissions freuid-repro:local
-# Two final picks from the SAME image/weights (inference-orchestration only):
-#   Pick 1 (main): docker run ... freuid-repro:local                # default VARIANT=main
-#   Pick 2 (fb5) : docker run ... -e VARIANT=fb5 freuid-repro:local
-# (VARIANT=plain also available: 3-way core, captured lever off — diagnostic.)
+# Single final pick (fb5) — no variant flags (see prepare_submission.py):
+#   docker run ... freuid-repro:local
 # (--shm-size: DataLoader workers need shared memory; the 64MB docker default
 #  crashes mid-inference. Without the flag the entrypoint degrades to
 #  num_workers=0 — correct but much slower.)
@@ -36,8 +34,5 @@ COPY weights/ /weights/
 RUN ln -s /weights/final /app/outputs
 
 ENV PYTHONPATH=/app PYTHONUNBUFFERED=1
-# VARIANT=main|fb5|plain — which final pick to reproduce (see prepare_submission.py)
-# TTA=0|1 — core hflip-TTA override (default: main/plain 0, fb5 1)
-ENV VARIANT=main
 ENTRYPOINT ["python", "-u", "/app/prepare_submission.py", \
             "--images-dir", "/data", "--out", "/submissions/submission.csv"]

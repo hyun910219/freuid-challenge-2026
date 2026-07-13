@@ -4,9 +4,9 @@ Run through this before every submission and before the final code freeze.
 
 ## Runtime & hardware
 - [ ] Full inference on the hidden test set finishes **< 6 h on a single A100**.
-- [ ] Ensemble/TTA justified by budget: main = FB4+FC3+FD3 bf16 noTTA fits the cap;
-      fb5 = FB5 bf16 hflip-TTA fits the cap, with the FC/FD captured-subset pass
-      budget-tiered (TTA / noTTA / off) at the observed captured fraction.
+- [ ] Ensemble/TTA justified by budget: FB5 bf16 hflip-TTA core fits the cap, with the
+      FC3/FD3 captured-subset pass budget-tiered (TTA / noTTA / off) at the observed
+      captured fraction.
 - [ ] bf16 autocast verified rank-safe and within budget.
 
 ## No-network contract
@@ -48,7 +48,7 @@ Run through this before every submission and before the final code freeze.
 - [ ] Pinned deps (`requirements.txt`) build against `pytorch/pytorch:2.12.0-cuda12.6-cudnn9-runtime`.
 - [ ] Technical report PDF (`report/`, built from `report.md` via `make_pdf.py`) covers
       method, data, inference, results, repro commands. `[D-DAY]` results filled post private-day.
-- [ ] Both final picks documented: `main` (default) and `fb5` (`-e VARIANT=fb5`), with the
+- [ ] Final pick documented: `fb5` (single pick, no variant flags), with the
       submission ↔ command ↔ output-checksum mapping recorded in `README.md`.
 
 ## Code freeze & final steps
