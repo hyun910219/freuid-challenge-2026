@@ -1,7 +1,7 @@
 #!/bin/bash
 # Download the 11 released checkpoints (~13 GB) into weights/ for docker build.
 # Run from the repo root:  bash scripts/download_weights.sh
-# Then:                    docker build -t freuid-repro:local -f docker/Dockerfile .
+# Then:                    bash scripts/build.sh   (or: docker build -t freuid-repro:local .)
 set -euo pipefail
 
 # GitHub Releases download base (override with WEIGHTS_BASE_URL if mirroring).

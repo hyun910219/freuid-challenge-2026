@@ -100,6 +100,8 @@ def _imsize(path: str) -> tuple[int, int]:
 
 def rank01(s: pd.Series) -> pd.Series:
     r = s.rank(method="average")
+    if len(r) <= 1:                  # single-row edge: avoid /0 (identical for n>1)
+        return r * 0.0
     return (r - 1) / (len(r) - 1)
 
 

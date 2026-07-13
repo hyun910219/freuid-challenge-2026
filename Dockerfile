@@ -14,6 +14,15 @@ FROM pytorch/pytorch:2.12.0-cuda12.6-cudnn9-runtime
 
 WORKDIR /app
 
+# ---- Build toolchain: torch.compile (Inductor) JIT-compiles at the first forward
+#      pass and needs a host C/C++ compiler. The *-runtime base image ships without
+#      one, so install g++ at build time (network is build-time only). Without it,
+#      torch.compile would raise under --network none at inference with no way to
+#      recover; prepare_submission.py additionally wraps compile in a suppress_errors
+#      + try/except eager fallback (belt-and-suspenders). ----
+RUN apt-get update && apt-get install -y --no-install-recommends g++ \
+    && rm -rf /var/lib/apt/lists/*
+
 # ---- Dependencies FIRST for layer caching (network is build-time only) ----
 COPY requirements.txt /app/
 # --break-system-packages: base image python is PEP668 externally-managed; this

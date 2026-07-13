@@ -68,7 +68,10 @@ def n_workers(default: int) -> int:
 
 def rank01(v) -> np.ndarray:  # noqa: ANN001
     r = pd.Series(v).rank(method="average").to_numpy()
-    return (r - 1) / (len(r) - 1)   # match scripts/private_day.py exactly
+    n = len(r)
+    if n <= 1:                       # single-row edge (e.g. 1-image smoke test): avoid /0
+        return np.zeros(n, dtype=float)
+    return (r - 1) / (n - 1)         # match scripts/private_day.py (identical for n>1)
 
 
 def logit_shift(p: np.ndarray, delta: float) -> np.ndarray:
@@ -160,8 +163,18 @@ def stage_infer(images_dir: Path, work: Path, members: list, tta: bool,
         model = _load_model(cfg, OUT / name / "best.ckpt", torch.device(device))
         # torch.compile: inference-orchestration speedup (~+17% on A10G, rank-preserving;
         # raw scores shift ~1e-2 but the pipeline is rank-based end-to-end). Freeze-legal:
-        # no weight/fold/resolution change. Runs offline (gcc suffices; no g++/network).
-        model = torch.compile(model)
+        # no weight/fold/resolution change. Runs offline (the Dockerfile installs g++ for
+        # the Inductor backend). Belt-and-suspenders eager fallback: torch.compile is LAZY
+        # (it compiles at the first forward pass), so suppress_errors is what actually
+        # degrades a first-batch compile failure to eager; the try/except only covers an
+        # unavailable backend at call time. Either path keeps the --network none container
+        # producing a submission (slower eager) instead of crashing with no output.
+        import torch._dynamo
+        torch._dynamo.config.suppress_errors = True
+        try:
+            model = torch.compile(model)
+        except Exception as e:  # noqa: BLE001
+            log(f"WARNING: torch.compile unavailable, eager fallback ({type(e).__name__}: {e})")
         ids, scores = [], []
         t0 = time.time()
         bs = loader.batch_size
