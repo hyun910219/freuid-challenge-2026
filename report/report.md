@@ -167,12 +167,17 @@ blind LTO table.
 
 ## 6. Reproducibility
 
-- Repo: https://github.com/hyun910219/freuid-challenge-2026, frozen commit SHA:
-  157ae380cf9e9f94e9fee64c8d92133ba2cdb1e8.
+- Repo: https://github.com/hyun910219/freuid-challenge-2026, commit SHA:
+  88c6686e899fbc07d0117b4be37b48b1fb00b520. Model weights are frozen throughout;
+  the post-freeze commits are rank-preserving only (157ae380... = size-based
+  captured routing; 88c6686... = container flag-independence: file_system
+  DataLoader IPC + device auto-detect). No weight/architecture/training change
+  at any point.
 - Docker: no-network container, weights baked in; flat `/data` in,
-  `/submissions/submission.csv` out. See README. Verified end-to-end:
-  `git clone` -> `docker build` -> `docker run --network none` on 7,821 public
-  images produced a valid, contract-compliant `submission.csv` offline.
+  `/submissions/submission.csv` out. See README. Verified end-to-end at 157ae380
+  (`git clone` -> `docker build` -> `docker run --network none` on 7,821 public
+  images -> valid, contract-compliant `submission.csv` offline); the later
+  robustness commit does not alter the container contract or the output ranking.
 - Training: one config per member, `src/train.py --config configs/<m>.yaml`.
 - Deterministic postprocessing; GPU/compile nondeterminism shifts raw scores at
   ~1e-2 but the pipeline is rank-based (the offline container reproduces our

@@ -16,7 +16,7 @@ Kaggle usernames: hyeonwoojeon
 Final Kaggle submission: 2026-07-13_ffb5_container_native_public.csv (2026-07-13 10:17 UTC, public 0.01245)
 
 Repository (public git): https://github.com/hyun910219/freuid-challenge-2026
-Commit SHA: 157ae380cf9e9f94e9fee64c8d92133ba2cdb1e8
+Commit SHA: 88c6686e899fbc07d0117b4be37b48b1fb00b520
 Technical report (PDF): https://github.com/hyun910219/freuid-challenge-2026/blob/main/report/report.pdf
 Model weights: hosted as GitHub Release assets (tag weights-v1, 11 checkpoints). SHA-256 in
   weights_sha256.txt; fetched at build time and baked into the image (no runtime download).
