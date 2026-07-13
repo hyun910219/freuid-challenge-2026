@@ -1,12 +1,11 @@
 # FREUID 2026 reproducibility container (frozen-backbone ensemble, FB/FC/FD).
 # Built with network; RUN with NO network:
-#   docker run --rm --network none --gpus all --shm-size=8g \
+#   docker run --rm --network none --gpus all \
 #       -v <IMAGES_DIR>:/data:ro -v <OUT_DIR>:/submissions freuid-repro:local
 # Single final pick (fb5) — no variant flags (see prepare_submission.py):
 #   docker run ... freuid-repro:local
-# (--shm-size: DataLoader workers need shared memory; the 64MB docker default
-#  crashes mid-inference. Without the flag the entrypoint degrades to
-#  num_workers=0 — correct but much slower.)
+# (No --shm-size needed: DataLoader workers use the file_system sharing strategy
+#  (/tmp-backed IPC) instead of /dev/shm, so the 64MB docker default is fine.)
 # Input : /data          — flat dir of images (.jpeg/.jpg/.png/.webp/.bmp/.tif/.tiff)
 # Output: /submissions/submission.csv  — id,label (finite float fraud score, higher=fraud)
 #

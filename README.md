@@ -65,14 +65,15 @@ scripts/build.sh          # verifies weights_sha256.txt, then: docker build -t f
 scripts/run_local.sh /absolute/path/to/flat/test/images
 
 # equivalently:
-docker run --rm --network none --gpus all --shm-size=8g \
+docker run --rm --network none --gpus all \
   -v /absolute/path/to/flat/test/images:/data:ro \
   -v "$(pwd)/out:/submissions" \
   freuid-repro:local
 ```
 
-Output → `out/submission.csv`. `--shm-size=8g` lets DataLoader workers use shared memory;
-without it the entrypoint auto-degrades to `num_workers=0` (correct, slower).
+Output → `out/submission.csv`. DataLoader workers use the file_system sharing
+strategy (/tmp-backed IPC) instead of `/dev/shm`, so the run needs only
+`--network none` + GPU access — no `--shm-size` flag required.
 
 ### The final pick (fb5)
 

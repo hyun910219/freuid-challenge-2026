@@ -22,7 +22,7 @@ Model weights: hosted as GitHub Release assets (tag weights-v1, 11 checkpoints).
   weights_sha256.txt; fetched at build time and baked into the image (no runtime download).
 Docker (offline, exactly as evaluated):
   docker build -t freuid-repro .
-  docker run --rm --network none --gpus all --shm-size=8g \
+  docker run --rm --network none --gpus all \
     -v <flat_test_images>:/data:ro -v <out>:/submissions freuid-repro
 Hardware: 1x NVIDIA A100 40GB, 24 CPU cores (inference < 6 h on a single A100).
 

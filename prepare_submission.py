@@ -59,16 +59,11 @@ def log(m):  # noqa: ANN001
 
 
 def n_workers(default: int) -> int:
-    """DataLoader workers need shared memory; docker's default /dev/shm is 64MB
-    and crashes mid-inference (measured 2026-07-11 smoke). Degrade to 0 workers
-    (slow but correct) instead of crashing when the flag was forgotten."""
-    import shutil
-    shm_gib = shutil.disk_usage("/dev/shm").total / 2**30
-    if shm_gib >= 2:
-        return default
-    log(f"WARNING: /dev/shm is {shm_gib:.2f} GiB — falling back to "
-        f"num_workers=0 (much slower). Re-run with --shm-size=8g.")
-    return 0
+    """Full worker count regardless of --shm-size. stage_infer sets the torch
+    multiprocessing sharing strategy to 'file_system', so worker<->main tensor
+    IPC uses /tmp-backed files instead of /dev/shm; the 64MB-/dev/shm crash that
+    previously forced a num_workers=0 fallback no longer applies."""
+    return default
 
 
 def rank01(v) -> np.ndarray:  # noqa: ANN001
@@ -134,6 +129,14 @@ def stage_infer(images_dir: Path, work: Path, members: list, tta: bool,
     from src.data import FreuidDataset, build_transforms
     from src.infer import _load_model
 
+    # Worker<->main tensor IPC via /tmp files, not /dev/shm: removes the 64MB
+    # default-shm crash so DataLoader workers run at full count without a
+    # --shm-size flag (rank-preserving; only changes the IPC mechanism).
+    torch.multiprocessing.set_sharing_strategy("file_system")
+    # Auto-detect device: use the GPU when exposed (docker --gpus), else fall
+    # back to CPU (correct, far slower) instead of hard-crashing on "cuda".
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
     test_csv = test_csv or work / "test_infer.csv"
     for name in members:
         out_csv = work / f"{prefix}_{name}.csv"
@@ -154,7 +157,7 @@ def stage_infer(images_dir: Path, work: Path, members: list, tta: bool,
         )
         loader = DataLoader(ds, batch_size=48, shuffle=False,
                             num_workers=n_workers(16), pin_memory=True)
-        model = _load_model(cfg, OUT / name / "best.ckpt", torch.device("cuda"))
+        model = _load_model(cfg, OUT / name / "best.ckpt", torch.device(device))
         # torch.compile: inference-orchestration speedup (~+17% on A10G, rank-preserving;
         # raw scores shift ~1e-2 but the pipeline is rank-based end-to-end). Freeze-legal:
         # no weight/fold/resolution change. Runs offline (gcc suffices; no g++/network).
@@ -163,9 +166,9 @@ def stage_infer(images_dir: Path, work: Path, members: list, tta: bool,
         t0 = time.time()
         bs = loader.batch_size
         log(f"infer {name} (bf16 {'TTA' if tta else 'noTTA'}, n={len(ds)}, compiled) ...")
-        with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
+        with torch.no_grad(), torch.autocast(device, dtype=torch.bfloat16):
             for batch in loader:
-                x = batch["image"].to("cuda", non_blocking=True)
+                x = batch["image"].to(device, non_blocking=True)
                 n = x.shape[0]
                 if n < bs:  # pad final partial batch to fixed bs -> single compile per model
                     x = torch.cat([x, x[-1:].expand(bs - n, *x.shape[1:])], dim=0)
@@ -178,7 +181,8 @@ def stage_infer(images_dir: Path, work: Path, members: list, tta: bool,
                 scores.extend(p.cpu().numpy().tolist())
                 ids.extend(batch["id"])
         del model
-        torch.cuda.empty_cache()
+        if device == "cuda":
+            torch.cuda.empty_cache()
         pd.DataFrame({"id": ids, "score": scores}).to_csv(
             out_csv, index=False, float_format="%.10f")
         done.touch()

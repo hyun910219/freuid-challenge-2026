@@ -21,7 +21,7 @@ mkdir -p out
 
 echo ">> Running ${IMAGE_TAG} (VARIANT=${VARIANT}) with --network none ..."
 docker run --rm --network none \
-  --gpus all --shm-size=8g \
+  --gpus all \
   -e VARIANT="${VARIANT}" \
   -v "${IMAGES_DIR}:/data:ro" \
   -v "$(pwd)/out:/submissions" \
