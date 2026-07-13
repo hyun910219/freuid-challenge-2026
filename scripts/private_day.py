@@ -69,6 +69,9 @@ A100_FACTOR, A100_FACTOR_CONSERVATIVE, CAP_H = 2.2, 2.0, 6.0
 N_TEST_FULL = 142_818
 CAP_DELTA = 0.75          # exp06d sweep optimum, LB-verified 0.01870 -> 0.01524
 NATIVE_FREQ = 0.005       # resolution seen in >=0.5% of scanned images = native
+MIN_NATIVE_W = 1000       # digital acquisitions are always >=1000px wide; a smaller
+#                           cluster (e.g. 840x530) is recapture/downscale -> captured,
+#                           even when frequent (matches prepare_submission.py + LB 0.01238).
 PUBLIC_MAIN_RES = {(1585, 1000), (1584, 1000), (1000, 630), (1387, 875)}  # cross-check
 
 
@@ -151,7 +154,7 @@ def stage_inventory(args, work: Path) -> None:
                         "path": [os.path.relpath(files[i], args.images_dir) for i in target],
                         "w": [s[0] for s in sizes], "h": [s[1] for s in sizes]})
     freq = inv.groupby(["w", "h"]).size().sort_values(ascending=False)
-    native = {wh for wh, n in freq.items() if n >= NATIVE_FREQ * len(inv)}
+    native = {wh for wh, n in freq.items() if n >= NATIVE_FREQ * len(inv) and wh[0] >= MIN_NATIVE_W}
     inv["captured"] = [wh not in native for wh in zip(inv.w, inv.h)]
     c = inv.captured.mean()
     inv.to_csv(work / "inventory.csv", index=False)

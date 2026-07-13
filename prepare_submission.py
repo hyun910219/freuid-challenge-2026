@@ -43,6 +43,10 @@ FD_MEMBERS = ["ff_d_fold1", "ff_d_fold2", "ff_d_fold3"]
 CORE_BB = {"fb": FB5_MEMBERS}   # single-backbone core (FB5); FC/FD = captured lever
 CAP_DELTA = 0.75          # capShift, sigmoid space (exp06d sweep + LB verified)
 NATIVE_FREQ = 0.005       # resolution cluster >= 0.5% of rows -> native (non-captured)
+MIN_NATIVE_W = 1000       # digital acquisitions are always >=1000px wide; a smaller
+#                           cluster (e.g. 840x530) is recapture/downscale -> captured,
+#                           even when frequent. Matches the LB-adopted size-based split
+#                           (public 158 captured, LB 0.01238) vs freq-only (37, 0.01679).
 # budget tier (mirrors scripts/private_day.py — decisions must match):
 # A10G bench ms/img/ckpt (noTTA; hflip-TTA = 2x); cap normalized to full-test size.
 MS_CORE = {"fb": 27.1, "fc": 25.8, "fd": 27.7}
@@ -114,7 +118,7 @@ def stage_inventory(images_dir: Path, work: Path) -> pd.DataFrame:
         log(f"WARNING: {bad} unreadable image(s) — kept, treated as captured")
     freq = inv["size"].value_counts()
     native = {s for s, n in freq.items()
-              if n >= NATIVE_FREQ * len(inv) or s in PUBLIC_MAIN_RES}
+              if s[0] >= MIN_NATIVE_W and (n >= NATIVE_FREQ * len(inv) or s in PUBLIC_MAIN_RES)}
     inv["captured"] = ~inv["size"].isin(native)
     c = inv.captured.mean()
     log(f"resolution clusters: {len(freq)}, captured fraction c = {c:.3%}")
