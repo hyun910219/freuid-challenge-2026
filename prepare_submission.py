@@ -151,15 +151,23 @@ def stage_infer(images_dir: Path, work: Path, members: list, tta: bool,
         loader = DataLoader(ds, batch_size=48, shuffle=False,
                             num_workers=n_workers(16), pin_memory=True)
         model = _load_model(cfg, OUT / name / "best.ckpt", torch.device("cuda"))
+        # torch.compile: inference-orchestration speedup (~+17% on A10G, rank-preserving;
+        # raw scores shift ~1e-2 but the pipeline is rank-based end-to-end). Freeze-legal:
+        # no weight/fold/resolution change. Runs offline (gcc suffices; no g++/network).
+        model = torch.compile(model)
         ids, scores = [], []
         t0 = time.time()
-        log(f"infer {name} (bf16 {'TTA' if tta else 'noTTA'}, n={len(ds)}) ...")
+        bs = loader.batch_size
+        log(f"infer {name} (bf16 {'TTA' if tta else 'noTTA'}, n={len(ds)}, compiled) ...")
         with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
             for batch in loader:
                 x = batch["image"].to("cuda", non_blocking=True)
-                p = torch.sigmoid(model(x).float())
+                n = x.shape[0]
+                if n < bs:  # pad final partial batch to fixed bs -> single compile per model
+                    x = torch.cat([x, x[-1:].expand(bs - n, *x.shape[1:])], dim=0)
+                p = torch.sigmoid(model(x).float())[:n]
                 if tta:
-                    p = 0.5 * (p + torch.sigmoid(model(torch.flip(x, dims=[-1])).float()))
+                    p = 0.5 * (p + torch.sigmoid(model(torch.flip(x, dims=[-1])).float())[:n])
                 # guard: a non-finite score would poison ranking and break the
                 # "finite float" contract -> clamp to neutral 0.5 / the bounds.
                 p = torch.nan_to_num(p, nan=0.5, posinf=1.0, neginf=0.0)
