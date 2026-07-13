@@ -1,7 +1,9 @@
 # Pinned to the competition inference environment (python 3.12.12).
-# CUDA wheels come from the pytorch/pytorch:2.12.0-cuda12.6 base image at build time.
-torch==2.12.0
-torchvision==0.27.0
+# torch / torchvision are intentionally NOT listed: the CUDA-enabled builds
+# (torch 2.12.0+cu126, torchvision 0.27.0+cu126) already ship in the
+# pytorch/pytorch:2.12.0-cuda12.6-cudnn9-runtime base image. Listing them here would
+# let pip pull a CPU-only wheel from PyPI if the pin ever drifts from the base image
+# (a CPU run cannot meet the 6h/A100 budget). Keep them base-provided.
 timm==1.0.27
 albumentations==2.0.8
 omegaconf==2.3.0
