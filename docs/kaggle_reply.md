@@ -11,26 +11,26 @@ Paste the block below (plain text) with every `<...>` / `[...]` field filled in.
 FREUID Challenge 2026 - Reproducibility Package
 ---
 
-Team name: <TEAM_NAME>
-Kaggle usernames: <KAGGLE_USERNAMES>
-Final Kaggle submission: [label / date-time as shown on Kaggle]
+Team name: Hyeonwoo Jeon
+Kaggle usernames: hyeonwoojeon
+Final Kaggle submission: 2026-07-13_ffb5_container_native_public.csv (2026-07-13 10:17 UTC, public 0.01245)
 
 Repository (public git): https://github.com/hyun910219/freuid-challenge-2026
-Commit SHA: <40-char frozen commit SHA>
-Technical report (PDF): https://github.com/hyun910219/freuid-challenge-2026/blob/<SHA>/report/report.pdf
+Commit SHA: 157ae380cf9e9f94e9fee64c8d92133ba2cdb1e8
+Technical report (PDF): https://github.com/hyun910219/freuid-challenge-2026/blob/main/report/report.pdf
 Model weights: hosted as GitHub Release assets (tag weights-v1, 11 checkpoints). SHA-256 in
   weights_sha256.txt; fetched at build time and baked into the image (no runtime download).
 Docker (offline, exactly as evaluated):
   docker build -t freuid-repro .
-  docker run --rm --network none --gpus all \
+  docker run --rm --network none --gpus all --shm-size=8g \
     -v <flat_test_images>:/data:ro -v <out>:/submissions freuid-repro
-Hardware: 1x NVIDIA A100 (inference < 6 h on a single A100).
+Hardware: 1x NVIDIA A100 40GB, 24 CPU cores (inference < 6 h on a single A100).
 
 We confirm this repository at the stated commit reproduces our selected final submission
 and complies with the competition rules.
 
-Signed (team captain): <CAPTAIN_NAME>
-Date (UTC): [YYYY-MM-DD]
+Signed (team captain): Hyeonwoo Jeon
+Date (UTC): 2026-07-13
 
 ---
 

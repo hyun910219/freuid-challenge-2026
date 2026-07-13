@@ -17,7 +17,7 @@ for recaptured (screen/print-recapture) images:
 | **FD** | frozen SigLIP2-L (`vit_large_patch16_siglip_384.v2_webli`) + merged LoRA, 3 folds @448×720, 0.5/0.5 norm |
 | Fold aggregation | plain mean of fold scores (per backbone) |
 | Backbone combine | equal rank-mean of the 3 backbones (cross-domain rule) |
-| Captured detection | resolution-frequency: clusters < 0.5% of rows = captured |
+| Captured detection | resolution-size: native = width >= 1000 px AND (freq >= 0.5% or known cluster); everything smaller (e.g. 840x530 recaptures) = captured |
 | capShift | score shift δ=0.75 in logit space, per backbone, captured rows only |
 | Captured reorder | within-captured equal mean-rank of the 3 backbones (**ens3** = FB5 + FC3 + FD3) |
 | Output | strict total order → `(pos+0.5)/n` rank values |

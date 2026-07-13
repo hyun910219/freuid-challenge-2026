@@ -1,4 +1,4 @@
-# FREUID Challenge 2026 — Technical Report (DRAFT)
+# FREUID Challenge 2026 — Technical Report
 
 <!-- Convert to PDF before 07-15 AoE. Toolchain verified 2026-07-10:
      system python3 has weasyprint 66.0 (markdown -> HTML -> PDF); no pandoc.
@@ -59,8 +59,13 @@ held-out EGYPT) and pooled OOF by another -57%.
 1. Per-backbone fold plain mean -> per-backbone score.
 2. **Cross-backbone equal rank-mean over FB/FC/FD** (score-mean dilutes the
    weaker-calibrated backbone on out-of-domain data).
-3. **Recaptured-row detection** by resolution frequency: native resolution
-   clusters cover >= 0.5% of rows each; everything else is captured.
+3. **Recaptured-row detection** by resolution: a resolution is native only if
+   it is high-resolution (width >= 1000 px) AND either frequent (>= 0.5% of
+   rows) or a known native cluster; everything else — including frequent but
+   low-resolution formats such as 840x530 — is captured. In the training data
+   digital captures are always >= 1000 px wide while recaptured/downscaled
+   images are smaller, so width cleanly separates the two acquisition types
+   (a frequent 840x530 recapture format would otherwise be misread as native).
 4. **capShift**: captured rows are shifted by delta = 0.75 in logit space
    (per backbone) — recaptured bona fide images otherwise inflate the fraud
    tail (APCER at 1% BPCER dominates the metric). Public-LB verified:
@@ -106,15 +111,21 @@ composition), while FC3/FD3 touch only the captured subset.
 
 ## 4. Inference / Budget
 
-- Full test (142,818 images) through the FB5 bf16 hflip-TTA core: ~5.4h at a
-  conservative /2.0 A100-equivalent (measured 27.1 ms/img/ckpt for FB on A10G;
-  hflip-TTA = 2x), within the 6h/A100 budget. torch.compile measured slower
-  than eager (x0.73-0.79) and is not used.
+- Evaluator (organizer-confirmed): 1x NVIDIA A100 40 GB, 24 CPU cores, <= 6 h
+  on the hidden test set.
+- End-to-end offline (`--network none`) measurement on a single A10G (a ~2-2.7x
+  slower proxy for the A100): 7,821 images in ~33 min for the full pipeline
+  (~0.25 s/img). Projected to the full 142,818-image test set: ~10 h on A10G ->
+  **~5 h on A100 at a conservative /2.0 factor** (~3.5 h at a realistic /2.7),
+  within the 6 h budget. Peak GPU memory < 23 GB (fits A100 40 GB).
+- torch.compile is applied to the inference model (rank-preserving; raw scores
+  shift ~1e-2 but the pipeline is rank-based end-to-end). It amortizes over the
+  many batches of the full test set (~+17% throughput measured on A10G).
 - The FC3/FD3 captured pass (25.8 / 27.7 ms/img/ckpt on A10G) touches captured
   rows only, in the budget tier of Sec. 2.3 step 5 (TTA up to c<=9.8%, noTTA
-  up to c<=19.6%, off beyond — capShift still applies).
-- [D-DAY: actual private captured fraction c, captured-lever GO/NO-GO,
-  FC/FD tier, wall time]
+  up to c<=19.6%, off beyond — capShift still applies). Core cost (FB5
+  hflip-TTA) dominates and scales linearly with the image count, so the run
+  stays within the cap regardless of the private captured fraction.
 
 ## 5. Results
 
@@ -124,8 +135,9 @@ composition), while FC3/FD3 touch only the captured subset.
 | + capShift (delta 0.75) | 0.01524 |
 | + captured reorder, early ensemble (¹) | 0.01304 |
 | + captured reorder, all backbones (¹) | 0.01252 |
-| + captured ens3 reorder (released FB5+FC3+FD3) | [07-13] |
-| Private fb5 pick (FB5 hflip-TTA + captured lever) | [D-DAY] |
+| + captured ens3 reorder (released FB5+FC3+FD3, size-based routing) | 0.01238 |
+| Container-native output (`docker run`, rank values, reproduces the above) | 0.01245 |
+| Private fb5 pick (FB5 hflip-TTA + captured lever) | hidden until 2026-07-24 |
 
 (¹) These two intermediate public-LB points additionally used
 recapture-specialist checkpoints that are not part of this release. They are
@@ -155,12 +167,16 @@ blind LTO table.
 
 ## 6. Reproducibility
 
-- Repo: https://github.com/hyun910219/freuid-challenge-2026, frozen commit SHA: [SHA].
+- Repo: https://github.com/hyun910219/freuid-challenge-2026, frozen commit SHA:
+  157ae380cf9e9f94e9fee64c8d92133ba2cdb1e8.
 - Docker: no-network container, weights baked in; flat `/data` in,
-  `/submissions/submission.csv` out. See README.
+  `/submissions/submission.csv` out. See README. Verified end-to-end:
+  `git clone` -> `docker build` -> `docker run --network none` on 7,821 public
+  images produced a valid, contract-compliant `submission.csv` offline.
 - Training: one config per member, `src/train.py --config configs/<m>.yaml`.
-- Deterministic postprocessing; GPU nondeterminism affects raw scores at
-  ~1e-4 (pipeline is rank-based).
+- Deterministic postprocessing; GPU/compile nondeterminism shifts raw scores at
+  ~1e-2 but the pipeline is rank-based (the offline container reproduces our
+  submitted ranking at Spearman >= 0.9999).
 
 ## 7. External Resources
 
