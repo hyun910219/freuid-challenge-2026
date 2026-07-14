@@ -13,24 +13,32 @@ FREUID Challenge 2026 - Reproducibility Package
 
 Team name: Hyeonwoo Jeon
 Kaggle usernames: hyeonwoojeon
-Final Kaggle submission: 2026-07-13_ffb5_container_native_public.csv (2026-07-13 10:17 UTC, public 0.01245)
+Final Kaggle submission (two selected final picks — same commit + weights, inference-time VARIANT flag only):
+  Pick 1: submission_fb5_fc3fd3_SUBMIT.csv (2026-07-14 02:55 UTC, public 0.01238)
+          reproduce: docker run ... freuid-repro                 (default; VARIANT=ens3, captured FB5+FC3+FD3)
+  Pick 2: submission_fb5_fd3_SUBMIT.csv    (2026-07-14 03:14 UTC, public 0.01238)
+          reproduce: docker run ... -e VARIANT=fd freuid-repro   (captured FB5+FD3)
 
 Repository (public git): https://github.com/hyun910219/freuid-challenge-2026
-Commit SHA: 88c6686e899fbc07d0117b4be37b48b1fb00b520
-Technical report (PDF): https://github.com/hyun910219/freuid-challenge-2026/blob/main/report/report.pdf
+Commit SHA: __HEAD__
+Technical report (PDF): https://github.com/hyun910219/freuid-challenge-2026/blob/__HEAD__/report/report.pdf
 Model weights: hosted as GitHub Release assets (tag weights-v1, 11 checkpoints). SHA-256 in
   weights_sha256.txt; fetched at build time and baked into the image (no runtime download).
-Docker (offline, exactly as evaluated):
+Docker (offline, exactly as evaluated) — pass --shm-size=16g (worker->main IPC uses /dev/shm):
   docker build -t freuid-repro .
-  docker run --rm --network none --gpus all \
+  # Pick 1 (default, VARIANT=ens3):
+  docker run --rm --network none --gpus all --shm-size=16g \
+    -v <flat_test_images>:/data:ro -v <out>:/submissions freuid-repro
+  # Pick 2 (VARIANT=fd):
+  docker run --rm --network none --gpus all --shm-size=16g -e VARIANT=fd \
     -v <flat_test_images>:/data:ro -v <out>:/submissions freuid-repro
 Hardware: 1x NVIDIA A100 40GB, 24 CPU cores (inference < 6 h on a single A100).
 
-We confirm this repository at the stated commit reproduces our selected final submission
+We confirm this repository at the stated commit reproduces our selected final submissions
 and complies with the competition rules.
 
 Signed (team captain): Hyeonwoo Jeon
-Date (UTC): 2026-07-13
+Date (UTC): 2026-07-14
 
 ---
 
