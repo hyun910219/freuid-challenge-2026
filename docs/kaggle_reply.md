@@ -20,8 +20,8 @@ Final Kaggle submission (two selected final picks — same commit + weights, inf
           reproduce: docker run ... -e VARIANT=fd freuid-repro   (captured FB5+FD3)
 
 Repository (public git): https://github.com/hyun910219/freuid-challenge-2026
-Commit SHA: __HEAD__
-Technical report (PDF): https://github.com/hyun910219/freuid-challenge-2026/blob/__HEAD__/report/report.pdf
+Commit SHA: b21e0a8108a9298c18e00694d8c282e993ebdf4f
+Technical report (PDF): https://github.com/hyun910219/freuid-challenge-2026/blob/b21e0a8108a9298c18e00694d8c282e993ebdf4f/report/report.pdf
 Model weights: hosted as GitHub Release assets (tag weights-v1, 11 checkpoints). SHA-256 in
   weights_sha256.txt; fetched at build time and baked into the image (no runtime download).
 Docker (offline, exactly as evaluated) — pass --shm-size=16g (worker->main IPC uses /dev/shm):
