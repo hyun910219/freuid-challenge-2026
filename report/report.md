@@ -167,7 +167,7 @@ blind LTO table.
 ## 6. Reproducibility
 
 - Repo: https://github.com/hyun910219/freuid-challenge-2026, commit SHA:
-  __NEW_SHA__. Model weights are frozen throughout; every post-freeze commit is
+  813c68f3a30cb1251b51bddce1fc195ea4fbcebe. Model weights are frozen throughout; every post-freeze commit is
   inference-orchestration / documentation only (size-based captured routing; the
   `--shm-size` runtime requirement + a `num_workers=0` fallback; the `VARIANT`
   flag selecting the captured-reorder backbones). No weight/architecture/training
