@@ -1,24 +1,32 @@
-"""FREUID 2026 reproducibility container entrypoint (single fb5 final pick).
+"""FREUID 2026 reproducibility container entrypoint (two final picks, one image).
 
 End-to-end pipeline:
   1. inventory  — scan flat /data dir, PIL header resolution scan,
-                  captured detection = resolution-frequency (native >= 0.5%).
+                  captured detection = resolution-size (native >= 0.5% & >=1000px).
   2. infer      — frozen-backbone + merged-LoRA members, bf16:
                     core — FB5 (DINOv2-L, all 5 folds), hflip-TTA.
   3. combine    — per-fold plain-mean -> FB score order (single backbone).
-  4. captured   — capShift (delta=0.75, sigmoid space) + captured-internal ens3
-                  mean-rank reorder (FB5 + FC3 + FD3), with FC3 (OpenCLIP
-                  ViT-L/336) + FD3 (SigLIP2-L/16-384) scored on the captured
-                  subset only, tiered (TTA/noTTA/off) by the 6h/A100 budget at
-                  the observed captured fraction c.
+  4. captured   — capShift (delta=0.75, sigmoid space) + captured-internal
+                  mean-rank reorder over the VARIANT's backbones, with the extra
+                  backbones scored on the captured subset only, tiered
+                  (TTA/noTTA/off) by the 6h/A100 budget at the observed c.
   5. write      — strict total order -> (pos+0.5)/n -> id,label CSV.
+
+Two documented final picks from THIS frozen commit + THESE frozen weights
+(host-approved: inference-time flag only, no training/checkpoint change):
+  VARIANT=ens3 (default)  captured reorder = FB5 + FC3 + FD3   -> Pick 1
+  VARIANT=fd              captured reorder = FB5 + FD3          -> Pick 2
+The two picks are byte-identical everywhere except the captured rows' internal
+order (FC included vs excluded from the captured mean-rank).
 
 Note: the submitted file's public-block rows were frozen mid-competition
 (whole-file public metric); this container reproduces the ranking pipeline
 that produced them and the private-block ranking that decides the final score.
-The captured reorder is ens3 = FB5 + FC3 + FD3; earlier ensembles that added
-recapture-specialist checkpoints (not part of this release) were retired
-2026-07-12 to keep the captured lever within the inference budget.
+
+Runtime: pass --shm-size=16g (or --ipc=host). Worker->main tensor IPC uses
+/dev/shm even with the file_system sharing strategy on torch 2.12; the 64MB
+docker default is exhausted otherwise (a num_workers=0 fallback keeps a no-flag
+run alive but much slower — the documented commands include the flag).
 
 Entrypoint sits at the repo/image root (/app). Weights are baked in and
 resolved via /app/outputs -> /weights/final.
@@ -26,6 +34,7 @@ resolved via /app/outputs -> /weights/final.
 from __future__ import annotations
 
 import argparse
+import os
 import time
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
@@ -41,6 +50,12 @@ FB5_MEMBERS = ["ff_b_fold0", "ff_b_fold1", "ff_b_fold2", "ff_b_fold3_v2", "ff_b_
 FC_MEMBERS = ["ff_c_fold0", "ff_c_fold1", "ff_c_fold2"]
 FD_MEMBERS = ["ff_d_fold1", "ff_d_fold2", "ff_d_fold3"]
 CORE_BB = {"fb": FB5_MEMBERS}   # single-backbone core (FB5); FC/FD = captured lever
+EXT_MEMBERS = {"fc": FC_MEMBERS, "fd": FD_MEMBERS}
+# VARIANT selects which backbones enter the captured-internal reorder (see module
+# docstring). Same image, same weights — inference-time flag only.
+CAP_ENS = {"ens3": ["fb", "fc", "fd"], "fd": ["fb", "fd"]}
+VARIANT = os.environ.get("VARIANT", "ens3").strip().lower()
+assert VARIANT in CAP_ENS, f"unknown VARIANT={VARIANT!r} (use one of {list(CAP_ENS)})"
 CAP_DELTA = 0.75          # capShift, sigmoid space (exp06d sweep + LB verified)
 NATIVE_FREQ = 0.005       # resolution cluster >= 0.5% of rows -> native (non-captured)
 MIN_NATIVE_W = 1000       # digital acquisitions are always >=1000px wide; a smaller
@@ -52,6 +67,9 @@ MIN_NATIVE_W = 1000       # digital acquisitions are always >=1000px wide; a sma
 MS_CORE = {"fb": 27.1, "fc": 25.8, "fd": 27.7}
 A100_FACTOR_CONSERVATIVE, CAP_H, N_TEST_FULL = 2.0, 6.0, 142_818
 PUBLIC_MAIN_RES = {(1585, 1000), (1584, 1000), (1000, 630), (1387, 875)}
+BATCH = 48
+# shm-exhaustion error substrings (torch surfaces the worker collate failure)
+_SHM_ERR = ("shared memory", "No space left", "/dev/shm", "bus error")
 
 
 def log(m):  # noqa: ANN001
@@ -59,10 +77,10 @@ def log(m):  # noqa: ANN001
 
 
 def n_workers(default: int) -> int:
-    """Full worker count regardless of --shm-size. stage_infer sets the torch
-    multiprocessing sharing strategy to 'file_system', so worker<->main tensor
-    IPC uses /tmp-backed files instead of /dev/shm; the 64MB-/dev/shm crash that
-    previously forced a num_workers=0 fallback no longer applies."""
+    """Worker count. Worker->main tensor IPC uses /dev/shm even with the
+    file_system sharing strategy on torch 2.12, so the container must be run
+    with --shm-size=16g (or --ipc=host). stage_infer falls back to num_workers=0
+    if /dev/shm is exhausted, so a no-flag run still produces output (slower)."""
     return default
 
 
@@ -132,9 +150,9 @@ def stage_infer(images_dir: Path, work: Path, members: list, tta: bool,
     from src.data import FreuidDataset, build_transforms
     from src.infer import _load_model
 
-    # Worker<->main tensor IPC via /tmp files, not /dev/shm: removes the 64MB
-    # default-shm crash so DataLoader workers run at full count without a
-    # --shm-size flag (rank-preserving; only changes the IPC mechanism).
+    # file_system sharing strategy (named shm objects). Worker->main IPC still
+    # uses /dev/shm on torch 2.12, so the container needs --shm-size=16g /
+    # --ipc=host; the num_workers=0 fallback below degrades gracefully if missing.
     torch.multiprocessing.set_sharing_strategy("file_system")
     # Auto-detect device: use the GPU when exposed (docker --gpus), else fall
     # back to CPU (correct, far slower) instead of hard-crashing on "cuda".
@@ -158,41 +176,53 @@ def stage_infer(images_dir: Path, work: Path, members: list, tta: bool,
                 std=cfg.data.get("norm_std", None)),
             mode="test",
         )
-        loader = DataLoader(ds, batch_size=48, shuffle=False,
-                            num_workers=n_workers(16), pin_memory=True)
         model = _load_model(cfg, OUT / name / "best.ckpt", torch.device(device))
         # torch.compile: inference-orchestration speedup (~+17% on A10G, rank-preserving;
         # raw scores shift ~1e-2 but the pipeline is rank-based end-to-end). Freeze-legal:
         # no weight/fold/resolution change. Runs offline (the Dockerfile installs g++ for
-        # the Inductor backend). Belt-and-suspenders eager fallback: torch.compile is LAZY
-        # (it compiles at the first forward pass), so suppress_errors is what actually
-        # degrades a first-batch compile failure to eager; the try/except only covers an
-        # unavailable backend at call time. Either path keeps the --network none container
-        # producing a submission (slower eager) instead of crashing with no output.
+        # the Inductor backend). torch.compile is LAZY (compiles at first forward), so
+        # suppress_errors degrades a first-batch compile failure to eager; the try/except
+        # only covers an unavailable backend at call time.
         import torch._dynamo
         torch._dynamo.config.suppress_errors = True
         try:
             model = torch.compile(model)
         except Exception as e:  # noqa: BLE001
             log(f"WARNING: torch.compile unavailable, eager fallback ({type(e).__name__}: {e})")
-        ids, scores = [], []
+
+        def _run(nw):  # noqa: ANN001,ANN202
+            loader = DataLoader(ds, batch_size=BATCH, shuffle=False,
+                                num_workers=nw, pin_memory=True)
+            ids, scores = [], []
+            with torch.no_grad(), torch.autocast(device, dtype=torch.bfloat16):
+                for batch in loader:
+                    x = batch["image"].to(device, non_blocking=True)
+                    n = x.shape[0]
+                    if n < BATCH:  # pad final partial batch -> single compile per model
+                        x = torch.cat([x, x[-1:].expand(BATCH - n, *x.shape[1:])], dim=0)
+                    p = torch.sigmoid(model(x).float())[:n]
+                    if tta:
+                        p = 0.5 * (p + torch.sigmoid(model(torch.flip(x, dims=[-1])).float())[:n])
+                    # guard: a non-finite score would poison ranking and break the
+                    # "finite float" contract -> clamp to neutral 0.5 / the bounds.
+                    p = torch.nan_to_num(p, nan=0.5, posinf=1.0, neginf=0.0)
+                    scores.extend(p.cpu().numpy().tolist())
+                    ids.extend(batch["id"])
+            return ids, scores
+
         t0 = time.time()
-        bs = loader.batch_size
         log(f"infer {name} (bf16 {'TTA' if tta else 'noTTA'}, n={len(ds)}, compiled) ...")
-        with torch.no_grad(), torch.autocast(device, dtype=torch.bfloat16):
-            for batch in loader:
-                x = batch["image"].to(device, non_blocking=True)
-                n = x.shape[0]
-                if n < bs:  # pad final partial batch to fixed bs -> single compile per model
-                    x = torch.cat([x, x[-1:].expand(bs - n, *x.shape[1:])], dim=0)
-                p = torch.sigmoid(model(x).float())[:n]
-                if tta:
-                    p = 0.5 * (p + torch.sigmoid(model(torch.flip(x, dims=[-1])).float())[:n])
-                # guard: a non-finite score would poison ranking and break the
-                # "finite float" contract -> clamp to neutral 0.5 / the bounds.
-                p = torch.nan_to_num(p, nan=0.5, posinf=1.0, neginf=0.0)
-                scores.extend(p.cpu().numpy().tolist())
-                ids.extend(batch["id"])
+        try:
+            ids, scores = _run(n_workers(16))
+        except RuntimeError as e:  # noqa: BLE001
+            if any(k in str(e) for k in _SHM_ERR):
+                log("WARNING: /dev/shm exhausted — run with --shm-size=16g (or "
+                    "--ipc=host). Retrying this member with num_workers=0 (slower).")
+                if device == "cuda":
+                    torch.cuda.empty_cache()
+                ids, scores = _run(0)
+            else:
+                raise
         del model
         if device == "cuda":
             torch.cuda.empty_cache()
@@ -220,22 +250,16 @@ def stage_combine(work: Path, bbs: dict) -> pd.DataFrame:
         merged[b] = merged[mem].mean(axis=1)   # fold-agg = plain mean
     # cross-backbone = equal rank-mean (single backbone -> its own score order)
     merged["combined"] = sum(rank01(merged[b]) for b in bbs) / len(bbs)
-    if len(bbs) > 1:
-        log(f"combine: n={len(merged)} "
-            f"spearman(fb,fc)={merged.fb.corr(merged.fc, method='spearman'):.4f} "
-            f"(fb,fd)={merged.fb.corr(merged.fd, method='spearman'):.4f}")
-    else:
-        log(f"combine: n={len(merged)} (FB 5-fold plain-mean, score order)")
+    log(f"combine: n={len(merged)} (FB 5-fold plain-mean, score order)")
     return merged[["id", "captured", *bbs, "combined"]].copy()
 
 
-def fb5_extras_tier(c: float) -> str:
-    """fb5 captured-lever budget tier at the conservative A100 factor
-    (mirrors scripts/private_day.py — decisions must match).
-    fb5 core is ALWAYS hflip-TTA, so the core cost is hardcoded at x2."""
+def fb5_extras_tier(c: float, ext_ms: float) -> str:
+    """Captured-lever budget tier at the conservative A100 factor (mirrors
+    scripts/private_day.py). fb5 core is ALWAYS hflip-TTA (cost hardcoded at x2);
+    ext_ms = per-image ms of the VARIANT's captured extra backbones (noTTA)."""
     core_ms = len(FB5_MEMBERS) * MS_CORE["fb"] * 2
     headroom = CAP_H - N_TEST_FULL * core_ms / 1000 / 3600 / A100_FACTOR_CONSERVATIVE
-    ext_ms = len(FC_MEMBERS) * MS_CORE["fc"] + len(FD_MEMBERS) * MS_CORE["fd"]
 
     def h(tta):  # noqa: ANN001
         return (N_TEST_FULL * c * ext_ms * (2 if tta else 1)
@@ -254,7 +278,7 @@ def stage_captured(sc: pd.DataFrame, images_dir: Path, work: Path,
     c = len(cap) / len(sc)
     for b in bbs:
         sc[f"{b}_s"] = sc[b]
-    sc["ens3"] = np.nan
+    sc["cap_ens"] = np.nan
     if len(cap) == 0:
         log("no captured rows — captured lever inactive")
         return sc
@@ -264,46 +288,51 @@ def stage_captured(sc: pd.DataFrame, images_dir: Path, work: Path,
     sc["combined"] = sum(rank01(sc[f"{b}_s"]) for b in bbs) / len(bbs)
     log(f"capShift delta={CAP_DELTA} applied to {len(cap)} rows (c={c:.2%})")
 
-    tier = fb5_extras_tier(c)
-    log(f"fb5 captured FC/FD tier = {tier} "
-        f"(c={c:.2%} @x{A100_FACTOR_CONSERVATIVE})")
+    # captured-internal reorder members for this VARIANT: 'fb' is the core score
+    # (already in sc); the extras (fc and/or fd) are scored on captured rows only.
+    ens_cols = CAP_ENS[VARIANT]
+    extra = [b for b in ens_cols if b != "fb"]
+    members = [mm for b in extra for mm in EXT_MEMBERS[b]]
+    ext_ms = sum(len(EXT_MEMBERS[b]) * MS_CORE[b] for b in extra)
+    tier = fb5_extras_tier(c, ext_ms)
+    log(f"captured reorder = {'+'.join(ens_cols).upper()} (VARIANT={VARIANT}); "
+        f"extras {'+'.join(extra).upper()} tier={tier} (c={c:.2%} @x{A100_FACTOR_CONSERVATIVE})")
     if tier == "OFF":
-        log("captured FC/FD over budget -> capShift only, no reorder")
+        log("captured extras over budget -> capShift only, no reorder")
         return sc
     cap_csv = work / "captured_infer.csv"
     inv = pd.read_csv(work / "inventory.csv", dtype={"id": str})
     inv[inv.captured].rename(columns={"path": "image_path"})[
         ["id", "image_path"]].to_csv(cap_csv, index=False)
-    stage_infer(images_dir, work, FC_MEMBERS + FD_MEMBERS,
-                tta=(tier == "TTA"), test_csv=cap_csv, prefix="scores_cap")
-    for name in FC_MEMBERS + FD_MEMBERS:
+    stage_infer(images_dir, work, members, tta=(tier == "TTA"),
+                test_csv=cap_csv, prefix="scores_cap")
+    for name in members:
         df = pd.read_csv(work / f"scores_cap_{name}.csv", dtype={"id": str})
         cap = cap.merge(df.rename(columns={"score": name}), on="id", how="inner")
-    if len(cap) != int(sc.captured.sum()):  # fallback: capShift only, no ens3
-        log("WARNING: captured FC/FD coverage mismatch -> capShift only, no reorder")
+    if len(cap) != int(sc.captured.sum()):  # fallback: capShift only, no reorder
+        log("WARNING: captured extras coverage mismatch -> capShift only, no reorder")
         return sc
-    cap["fc"] = cap[FC_MEMBERS].mean(axis=1)
-    cap["fd"] = cap[FD_MEMBERS].mean(axis=1)
-    # ens3 = FB5 + FC3 + FD3 equal mean-rank (exp16), captured subset only.
-    cols = ["fb", "fc", "fd"]
-    for col in cols:
+    for b in extra:
+        cap[b] = cap[EXT_MEMBERS[b]].mean(axis=1)
+    # equal mean-rank over the VARIANT's backbones, captured subset only (exp16).
+    for col in ens_cols:
         cap[f"rk_{col}"] = cap[col].rank(method="average")
-    cap["ens3"] = cap[[f"rk_{col}" for col in cols]].mean(axis=1)
-    sc = sc.drop(columns=["ens3"]).merge(cap[["id", "ens3"]], on="id", how="left")
-    log("ens3 captured-internal ordering computed")
+    cap["cap_ens"] = cap[[f"rk_{col}" for col in ens_cols]].mean(axis=1)
+    sc = sc.drop(columns=["cap_ens"]).merge(cap[["id", "cap_ens"]], on="id", how="left")
+    log(f"captured-internal ordering computed ({'+'.join(ens_cols).upper()})")
     return sc
 
 
 def stage_write(sc: pd.DataFrame, out_csv: Path) -> None:
-    # capShift'd fb_s is the tiebreak; ens3 (if present) reorders captured rows
+    # capShift'd fb_s is the tiebreak; cap_ens (if present) reorders captured rows
     fb_col = "fb_s" if "fb_s" in sc.columns else "fb"
     sc = sc.sort_values(["combined", fb_col, "id"], kind="mergesort").reset_index(drop=True)
     n = len(sc)
     sc["value"] = (np.arange(n) + 0.5) / n
-    if "ens3" in sc.columns and sc.ens3.notna().any():
-        m = sc.ens3.notna()
+    if "cap_ens" in sc.columns and sc.cap_ens.notna().any():
+        m = sc.cap_ens.notna()
         vals = np.sort(sc.loc[m, "value"].to_numpy())
-        order = sc.loc[m].sort_values(["ens3", "id"], kind="mergesort").index
+        order = sc.loc[m].sort_values(["cap_ens", "id"], kind="mergesort").index
         sc.loc[order, "value"] = vals
         log(f"captured-internal reorder applied to {int(m.sum())} rows")
     vals_fmt = ["%.10f" % v for v in sc.value]
@@ -329,14 +358,15 @@ def main() -> None:
     work.mkdir(parents=True, exist_ok=True)
     bbs = CORE_BB
     tta = True                       # fb5 core is always hflip-TTA
-    log("pick=fb5 (FB5 core hflip-TTA + captured capShift/ens3)")
+    log(f"pick=fb5 VARIANT={VARIANT} (FB5 core hflip-TTA + capShift + "
+        f"{'+'.join(CAP_ENS[VARIANT]).upper()} captured reorder)")
 
     inv = stage_inventory(images_dir, work)
     inv.rename(columns={"path": "image_path"})[["id", "image_path"]].to_csv(
         work / "test_infer.csv", index=False)
     stage_infer(images_dir, work, [m for mem in bbs.values() for m in mem], tta)
     sc = stage_combine(work, bbs)
-    sc = stage_captured(sc, images_dir, work, bbs)   # capShift + ens3
+    sc = stage_captured(sc, images_dir, work, bbs)   # capShift + captured reorder
     stage_write(sc, Path(args.out))
     log("done")
 

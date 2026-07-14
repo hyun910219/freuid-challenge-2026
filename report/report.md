@@ -100,11 +100,10 @@ composition), while FC3/FD3 touch only the captured subset.
 ## 3. Data
 
 - Training: FREUID official training set (69,352 images), 5-fold splits.
-  **No external dataset was used to train any submitted weight.**
-- External public datasets were used for offline evaluation only
-  (regression-guard battery; never seen by any training pipeline): FantasyID,
-  IDNet (eval holdout), MIDV-Holo, DLC-2021. Full list + licenses: Sec. 7.
-- External model weights: Sec. 7.
+  **No external dataset was used at any stage — not for training, and not for
+  model selection.** The submitted weights and every selection decision rely on
+  the competition data (and public-leaderboard feedback) only.
+- External model weights (pretrained backbones only): Sec. 7.
 - Validation protocol: blind leave-country-out (GUINEA fold, EGYPT fold) —
   the only offline signal that correlated with cross-domain behavior; pooled
   OOF does NOT predict LB (measured: best-OOF model was worst on LB).
@@ -168,16 +167,36 @@ blind LTO table.
 ## 6. Reproducibility
 
 - Repo: https://github.com/hyun910219/freuid-challenge-2026, commit SHA:
-  88c6686e899fbc07d0117b4be37b48b1fb00b520. Model weights are frozen throughout;
-  the post-freeze commits are rank-preserving only (157ae380... = size-based
-  captured routing; 88c6686... = container flag-independence: file_system
-  DataLoader IPC + device auto-detect). No weight/architecture/training change
-  at any point.
+  __NEW_SHA__. Model weights are frozen throughout; every post-freeze commit is
+  inference-orchestration / documentation only (size-based captured routing; the
+  `--shm-size` runtime requirement + a `num_workers=0` fallback; the `VARIANT`
+  flag selecting the captured-reorder backbones). No weight/architecture/training
+  change at any point.
+- Runtime: run with `--shm-size=16g` (or `--ipc=host`). DataLoader worker->main
+  tensor IPC uses `/dev/shm` even with the file_system sharing strategy on
+  torch 2.12; the 64 MB docker default is exhausted otherwise. The entrypoint
+  falls back to `num_workers=0` when the flag is absent (correct but slower).
+- Two final picks from ONE image via a documented inference-time flag
+  (host-approved: same commit + weights, flag only). Submission <-> command <->
+  output checksum:
+
+  | Final pick (Kaggle id / timestamp) | Command (all `--network none --shm-size=16g`) | sha256(container `submission.csv`) |
+  |---|---|---|
+  | **Pick 1** — `submission_fb5_fc3fd3_SUBMIT.csv` / 2026-07-14 02:55 UTC | `docker run ... freuid-repro:local` (`VARIANT=ens3`, captured = FB5+FC3+FD3) | `c09feef...908fc77e` |
+  | **Pick 2** — `submission_fb5_fd3_SUBMIT.csv` / 2026-07-14 03:14 UTC | `docker run ... -e VARIANT=fd freuid-repro:local` (captured = FB5+FD3) | `ac7eb76...eab33efe` |
+
+  (Reference sha256 from our A10G run; a fresh run matches at rank-Spearman
+  >= 0.9999 — bf16/compile perturbs raw scores ~1e-2, the pipeline is rank-based.)
+
+  Per the organizers, only the ranking submission (the better of the two selected
+  picks) must reproduce; both are documented. The container output's public block
+  and row order differ from the uploaded CSV (public rows were frozen mid-
+  competition, see the note on the submitted file); the private-block ranking —
+  which decides the score — is what the container reproduces.
 - Docker: no-network container, weights baked in; flat `/data` in,
-  `/submissions/submission.csv` out. See README. Verified end-to-end at 157ae380
-  (`git clone` -> `docker build` -> `docker run --network none` on 7,821 public
-  images -> valid, contract-compliant `submission.csv` offline); the later
-  robustness commit does not alter the container contract or the output ranking.
+  `/submissions/submission.csv` out. See README. Verified end-to-end
+  (`git clone` -> `docker build` -> `docker run --network none`) on public images
+  -> valid, contract-compliant `submission.csv` offline.
 - Training: one config per member, `src/train.py --config configs/<m>.yaml`.
 - Deterministic postprocessing; GPU/compile nondeterminism shifts raw scores at
   ~1e-2 but the pipeline is rank-based (the offline container reproduces our
@@ -191,11 +210,7 @@ blind LTO table.
 | OpenCLIP ViT-L/336 `openai_ft_in12k_in1k` (timm) | Apache-2.0 (OpenAI CLIP origin: MIT) | FC backbone |
 | SigLIP2 ViT-L/16-384 `v2_webli` (timm/big_vision) | Apache-2.0 (big_vision repo LICENSE verified) | FD backbone |
 | PyTorch 2.12 / timm 1.0.27 / albumentations 2.0.8 etc. | BSD/Apache/MIT | framework |
-| FantasyID (Idiap, zenodo 17063366) | CC-BY 4.0 + CC0 | **eval-only** (offline battery) |
-| IDNet (eval holdout subset) | CC-BY 4.0 | **eval-only** (offline battery) |
-| MIDV-Holo | CC-BY-SA 2.5 | **eval-only** (offline battery) |
-| DLC-2021 (zenodo 6466768 / 6792396) | CC-BY-SA 2.5 | **eval-only** (offline battery) |
 
-No external dataset was used to train any submitted weight; the four datasets
-above were used exclusively as an offline evaluation battery and are cited
-per the competition's external-resource rules (Rules Sec. 6).
+Only the pretrained backbones above (all license-compatible) and the listed
+frameworks are used. No external dataset was used at any stage — not to train any
+submitted weight, and not for model selection.

@@ -1,11 +1,12 @@
 # FREUID 2026 reproducibility container (frozen-backbone ensemble, FB/FC/FD).
-# Built with network; RUN with NO network:
-#   docker run --rm --network none --gpus all \
+# Built with network; RUN with NO network (pass --shm-size=16g or --ipc=host —
+# worker->main IPC uses /dev/shm even with the file_system strategy on torch 2.12,
+# so the 64MB docker default is exhausted and the run crashes without the flag):
+#   docker run --rm --network none --gpus all --shm-size=16g \
 #       -v <IMAGES_DIR>:/data:ro -v <OUT_DIR>:/submissions freuid-repro:local
-# Single final pick (fb5) — no variant flags (see prepare_submission.py):
-#   docker run ... freuid-repro:local
-# (No --shm-size needed: DataLoader workers use the file_system sharing strategy
-#  (/tmp-backed IPC) instead of /dev/shm, so the 64MB docker default is fine.)
+# Two final picks from THIS image via a documented flag (weights frozen):
+#   Pick 1 (default): docker run ... freuid-repro:local                # VARIANT=ens3 (FB5+FC3+FD3)
+#   Pick 2:           docker run ... -e VARIANT=fd freuid-repro:local  # (FB5+FD3)
 # Input : /data          — flat dir of images (.jpeg/.jpg/.png/.webp/.bmp/.tif/.tiff)
 # Output: /submissions/submission.csv  — id,label (finite float fraud score, higher=fraud)
 #

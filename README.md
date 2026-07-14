@@ -19,7 +19,7 @@ for recaptured (screen/print-recapture) images:
 | Backbone combine | equal rank-mean of the 3 backbones (cross-domain rule) |
 | Captured detection | resolution-size: native = width >= 1000 px AND (freq >= 0.5% or known cluster); everything smaller (e.g. 840x530 recaptures) = captured |
 | capShift | score shift δ=0.75 in logit space, per backbone, captured rows only |
-| Captured reorder | within-captured equal mean-rank of the 3 backbones (**ens3** = FB5 + FC3 + FD3) |
+| Captured reorder | within-captured equal mean-rank over the `VARIANT` backbones: **ens3** = FB5+FC3+FD3 (Pick 1, default) or **fd** = FB5+FD3 (Pick 2) |
 | Output | strict total order → `(pos+0.5)/n` rank values |
 
 Frozen backbones preserve the pretraining generalization prior; fine-tuned variants
@@ -31,7 +31,7 @@ captured ens3 reorder stays within the 6h/A100 cap. Details in `report/report.md
 
 | Aspect | Guarantee |
 |---|---|
-| Network | Inference runs with `--network none`. No runtime downloads. |
+| Network | Inference runs with `--network none`. No runtime downloads. Pass `--shm-size=16g` (or `--ipc=host`) — worker→main IPC uses `/dev/shm`. |
 | Weights | 11 checkpoints COPY'd into the image at build time. |
 | Runtime | Fits **< 6 h on a single A100**: FB5 bf16 hflip-TTA core (~5.4h @ conservative A10G/2.0) + FC3/FD3 on captured rows only, budget-tiered (TTA / noTTA / off). |
 | Input | Flat, read-only dir at `/data`. `id` = filename **without** extension. |
@@ -62,30 +62,51 @@ scripts/build.sh          # verifies weights_sha256.txt, then: docker build -t f
 ## Run (offline, exactly as evaluated)
 
 ```bash
-scripts/run_local.sh /absolute/path/to/flat/test/images
+scripts/run_local.sh /absolute/path/to/flat/test/images            # Pick 1 (default)
+VARIANT=fd scripts/run_local.sh /absolute/path/to/flat/test/images # Pick 2
 
 # equivalently:
-docker run --rm --network none --gpus all \
+docker run --rm --network none --gpus all --shm-size=16g \
   -v /absolute/path/to/flat/test/images:/data:ro \
   -v "$(pwd)/out:/submissions" \
-  freuid-repro:local
+  freuid-repro:local                                                # Pick 1 (VARIANT=ens3)
+docker run --rm --network none --gpus all --shm-size=16g -e VARIANT=fd \
+  -v /absolute/path/to/flat/test/images:/data:ro \
+  -v "$(pwd)/out:/submissions" \
+  freuid-repro:local                                                # Pick 2 (VARIANT=fd)
 ```
 
-Output → `out/submission.csv`. DataLoader workers use the file_system sharing
-strategy (/tmp-backed IPC) instead of `/dev/shm`, so the run needs only
-`--network none` + GPU access — no `--shm-size` flag required.
+Output → `out/submission.csv`. **`--shm-size=16g` (or `--ipc=host`) is required**:
+DataLoader worker→main tensor IPC uses POSIX shared memory (`/dev/shm`) even with the
+file_system sharing strategy on torch 2.12, and the docker default (64 MB) is far
+smaller than one prefetch window — without the flag the run fails with
+`No space left on device (28)`. (The entrypoint falls back to `num_workers=0` if the
+flag is missing, but that is much slower and may exceed the 6 h budget — pass the flag.)
 
-### The final pick (fb5)
+### The two final picks (one image, one flag)
 
-A single pick — no variant flags. `docker run` reproduces it directly:
+Both picks come from **this frozen commit and these frozen weights**; they differ only
+in one inference-time flag (`VARIANT`) — which backbones enter the within-captured
+mean-rank reorder. Everything else (FB5 core, capShift, native rows) is identical, so
+the two submissions are byte-identical outside the captured rows.
 
-- **core**: FB5 (all 5 FB folds of DINOv2-L), hflip-TTA → FB score order.
-- **captured lever**: capShift(δ=0.75) + within-captured **ens3** mean-rank reorder
-  (**FB5 + FC3 + FD3**), with FC3 (OpenCLIP ViT-L/336) + FD3 (SigLIP2-L/16-384) scored
-  on the captured rows only, tiered (TTA/noTTA/off) by the 6h/A100 budget.
+| Pick | `VARIANT` | Command | Captured reorder |
+|---|---|---|---|
+| **Pick 1** (default) | `ens3` | `docker run … freuid-repro:local` | FB5 + FC3 + FD3 |
+| **Pick 2** | `fd` | `docker run … -e VARIANT=fd freuid-repro:local` | FB5 + FD3 (drop FC) |
+
+- **core** (both): FB5 (all 5 FB folds of DINOv2-L), hflip-TTA → FB score order.
+- **captured lever** (both): capShift(δ=0.75) + within-captured mean-rank reorder; FC3
+  (OpenCLIP ViT-L/336) and/or FD3 (SigLIP2-L/16-384) scored on the captured rows only,
+  tiered (TTA/noTTA/off) by the 6h/A100 budget.
+
+Per the organizers, only the **ranking** submission (the better of the two selected
+picks) must reproduce; both are documented here. Record each output checksum for the
+submission↔command↔checksum mapping (also in `report/report.md`, §Reproducibility):
 
 ```bash
-docker run ... freuid-repro:local && sha256sum out/submission.csv
+docker run … freuid-repro:local               && sha256sum out/submission.csv  # Pick 1
+docker run … -e VARIANT=fd freuid-repro:local && sha256sum out/submission.csv  # Pick 2
 ```
 
 ## Validate

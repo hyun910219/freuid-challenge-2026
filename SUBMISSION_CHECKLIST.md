@@ -44,12 +44,13 @@ Run through this before every submission and before the final code freeze.
 - [ ] External data + licenses declared in `README.md` and the technical report.
 
 ## Reproducibility deliverables
-- [ ] `git clone → docker build → docker run --network none` reproduces the submission.
+- [ ] `git clone → docker build → docker run --network none --shm-size=16g` reproduces each selected pick.
 - [ ] Pinned deps (`requirements.txt`) build against `pytorch/pytorch:2.12.0-cuda12.6-cudnn9-runtime`.
 - [ ] Technical report PDF (`report/`, built from `report.md` via `make_pdf.py`) covers
       method, data, inference, results, repro commands. `[D-DAY]` results filled post private-day.
-- [ ] Final pick documented: `fb5` (single pick, no variant flags), with the
-      submission ↔ command ↔ output-checksum mapping recorded in `README.md`.
+- [ ] Two final picks documented: `fb5` VARIANT=ens3 (Pick 1, default) & VARIANT=fd (Pick 2),
+      same commit + weights, flag only; submission ↔ command ↔ output-checksum mapping in
+      `README.md` and `report/report.md` (§Reproducibility).
 
 ## Code freeze & final steps
 - [ ] Whole inference pipeline (pre/post-processing included) is in the frozen commit; after
